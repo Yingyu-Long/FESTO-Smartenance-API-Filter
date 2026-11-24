@@ -260,9 +260,14 @@ label > span {
 .filter-grid {
   margin-top: 23px;
   display: grid;
-  grid-template-columns: 1.5fr 1fr 1fr auto;
+  grid-template-columns: minmax(200px, 1.5fr) minmax(170px, 1fr) 1fr 1fr auto;
   gap: 16px;
   align-items: end;
+}
+.filter-grid [data-slot="select-trigger"] {
+  width: 100%;
+  height: 44px;
+  background: #fff;
 }
 .filter-note {
   margin: 17px 0 0;
@@ -320,10 +325,12 @@ footer a {
   background: #edf6fc;
   color: #2b6488;
 }
-@media (max-width: 850px) {
+@media (max-width: 1100px) {
   .filter-grid {
     grid-template-columns: 1fr 1fr;
   }
+}
+@media (max-width: 850px) {
   .connection-fields {
     flex-wrap: wrap;
   }
@@ -645,4 +652,18 @@ footer a {
     margin-left: auto;
     gap: 10px;
   }
+}
+
+.database-panel {
+  padding: 22px 26px;
+  background: #fff;
+  border: 1px solid #dce5ec;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+.database-panel .section-label { flex-wrap: wrap; }
+.sync-button { margin-left: auto; }
+@media (max-width: 600px) {
+  .sync-button { width: 100%; margin-left: 0; }
+  .database-panel { padding: 18px; }
 }

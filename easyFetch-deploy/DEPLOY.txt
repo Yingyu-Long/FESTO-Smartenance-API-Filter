@@ -1,0 +1,20 @@
+easyFetch offline Docker deployment package
+
+`easyFetch-images.tar` is a Docker image archive containing the application and
+PostgreSQL 17 images for linux/amd64. It can be loaded with `docker load`; it is
+not a source-code tar archive. No local database records or credentials are
+included.
+
+1. Change into this folder and load both images:
+   cd easyFetch-deploy
+   docker load -i easyFetch-images.tar
+2. Create the environment file:
+   cp .env.example .env
+3. Edit `.env` and replace `CHANGE_ME` with a strong URL-safe password. Compose
+   reads `.env` from the current directory; do not skip this step.
+4. Start the application and database:
+   docker compose up -d
+5. Open http://localhost:3000
+
+The database is stored in the Compose volume named postgres_data. `docker
+compose down` preserves it; `docker compose down -v` deletes it.

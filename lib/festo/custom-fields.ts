@@ -1,4 +1,5 @@
 import { plainText } from "./plain-text.ts";
+import type { CustomFieldValue } from "./types.ts";
 
 const fields = {
   repairContent: ["维修内容", "Repair content", "Repair work", "Maintenance content"],
@@ -46,4 +47,29 @@ export function repairCustomFields(values: unknown[] | null | undefined) {
     }
   }
   return result;
+}
+
+/** Retain every customer-defined field, including fields without a built-in alias. */
+export function allCustomFields(values: unknown[] | null | undefined, scope: CustomFieldValue["scope"]): CustomFieldValue[] {
+  const result = new Map<string, CustomFieldValue>();
+  for (const value of Array.isArray(values) ? values : []) {
+    if (!value || typeof value !== "object") continue;
+    const field = value as Record<string, unknown>;
+    if (field.isDeleted === true) continue;
+    const labels = [field.label, field.defaultLanguageLabel]
+      .filter((label): label is string => typeof label === "string" && !!label.trim());
+    const id = typeof field.customFieldId === "string" && field.customFieldId
+      ? field.customFieldId : labels[0];
+    if (!id) continue;
+    const translations = field.translations as Record<string, { title?: unknown }> | null;
+    const zh = translations?.ZH?.title ?? translations?.zh?.title;
+    const text = readable(field.value);
+    const previous = result.get(id);
+    result.set(id, {
+      id, scope, label: plainText(labels[0] ?? id),
+      labelZh: typeof zh === "string" && zh.trim() ? plainText(zh) : undefined,
+      value: previous?.value && text ? `${previous.value}; ${text}` : text || previous?.value || "",
+    });
+  }
+  return [...result.values()];
 }

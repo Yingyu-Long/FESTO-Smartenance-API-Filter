@@ -2,7 +2,7 @@ import tailwindcss from '@tailwindcss/postcss';
 import vinext from 'vinext';
 import { defineConfig } from 'vite';
 
-// This is a local-only application. Use Node's HTTP/TLS implementation:
+// Use Node's HTTP/TLS implementation:
 // the Workers emulator fails to reach api.festo.com on this computer.
 export default defineConfig({
   css: { postcss: { plugins: [tailwindcss()] } },

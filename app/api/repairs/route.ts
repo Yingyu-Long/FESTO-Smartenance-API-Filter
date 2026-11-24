@@ -1,12 +1,10 @@
 import {
-  FestoClient,
   FestoError,
-  collectRepairs,
-  errorMessage,
 } from '@/lib/festo/client';
+import { collectCachedRepairs } from '@/lib/festo/cached-repairs';
 import { validateFilters } from '@/lib/festo/shared';
 import { NO_STORE, readBody, tokenFrom, errorResponse } from '@/lib/festo/http';
-import type { ExportEvent } from '@/lib/festo/types';
+import { createExportStream } from '@/lib/festo/export-stream';
 export async function POST(request: Request) {
   try {
     const body = await readBody(request);
@@ -16,45 +14,16 @@ export async function POST(request: Request) {
     } catch (e) {
       throw new FestoError((e as Error).message, 400);
     }
-    const abort = new AbortController();
-    const signal = AbortSignal.any([request.signal, abort.signal]);
-    const client = new FestoClient(tokenFrom(request), { signal });
-    const encoder = new TextEncoder();
-    let closed = false;
-    const stream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        const emit = (event: ExportEvent) => {
-          if (!closed)
-            controller.enqueue(encoder.encode(JSON.stringify(event) + '\n'));
-        };
-        void (async () => {
-          try {
-            const result = await collectRepairs(client, filters, emit, signal);
-            emit({ type: 'complete', ...result });
-          } catch (error) {
-            if (!signal.aborted)
-              emit({
-                type: 'error',
-                message: errorMessage(error),
-                status: error instanceof FestoError ? error.status : 502,
-              });
-          } finally {
-            if (!closed) {
-              closed = true;
-              controller.close();
-            }
-          }
-        })();
-      },
-      cancel() {
-        closed = true;
-        abort.abort();
-      },
-    });
+    const token = tokenFrom(request);
+    const stream = createExportStream((emit, signal) =>
+      collectCachedRepairs(token, filters, emit, signal),
+      { signal: request.signal },
+    );
     return new Response(stream, {
       headers: {
         ...NO_STORE,
         'Content-Type': 'application/x-ndjson; charset=utf-8',
+        'X-Accel-Buffering': 'no',
       },
     });
   } catch (error) {

@@ -29,8 +29,17 @@ export interface Incident {
   createdAt?: string;
   fixedDateTime?: string | null;
   repairTasks?: RepairTask[] | null;
+  customFields?: unknown[] | null;
+}
+export interface CustomFieldValue {
+  id: string;
+  label: string;
+  labelZh?: string;
+  scope: "incident" | "repair";
+  value: string;
 }
 export interface RepairRow {
+  customFields?: CustomFieldValue[];
   machineId: string;
   machineName: string;
   machineNumber: string;
@@ -58,10 +67,31 @@ export interface RepairRow {
   repairOwner: string;
   repairCollaborators: string;
 }
+export type IncidentState = "Open" | "InWork" | "Closed";
+export type IncidentStateFilter = IncidentState | "All";
 export interface Filters {
   machineIds: string[];
   from: string;
   to: string;
+  incidentState: IncidentStateFilter;
+}
+export interface RepairResult {
+  rows: RepairRow[];
+  scanned: number;
+  filters: Filters;
+  fetchedAt?: string;
+  retrieval?: { bulkMachines: number; standardMachines: number; databaseMachines?: number; oldestSnapshotAt?: string };
+}
+export interface MachineIncidents {
+  incidents: Incident[];
+  source: "database" | "bulk" | "standard";
+  syncedAt: string;
+}
+export interface SyncResult {
+  machines: Machine[];
+  syncedMachines: number;
+  incidents: number;
+  syncedAt: string;
 }
 export type Progress = {
   type: "progress";
@@ -71,5 +101,5 @@ export type Progress = {
 };
 export type ExportEvent =
   | Progress
-  | { type: "complete"; rows: RepairRow[]; scanned: number }
+  | { type: "complete"; rows: RepairRow[]; scanned: number; retrieval?: RepairResult["retrieval"] }
   | { type: "error"; message: string; status: number };

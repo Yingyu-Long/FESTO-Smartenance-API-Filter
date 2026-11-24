@@ -1,12 +1,31 @@
 export type Language = "en" | "zh";
 
 const chinese: Record<string, string> = {
+  "PostgreSQL database": "PostgreSQL 数据库",
+  "Sync all machines": "同步全部设备",
+  "Syncing…": "正在同步…",
+  "Syncing database": "正在同步数据库",
+  "Last full sync (UTC+8)": "本次会话上次完整同步（北京时间）",
+  "Oldest snapshot (UTC+8)": "最早数据读取时间（北京时间）",
+  "Queries use saved data first. Missing machines are fetched from Festo and saved automatically. Sync refreshes all accessible machines, including existing incidents and new repairs.":
+    "查询优先读取数据库，未缓存的设备自动从 Festo 获取并保存。同步会更新全部可访问设备，包括已有故障和新增维修任务。",
+  "Saved data reflects the last successful read. Sync before querying when you need the latest changes.":
+    "数据库保存的是上次成功读取的数据。需要最新修改时，请先同步再查询。",
+  "Completed machines are saved as sync progresses.": "每台设备完整读取成功后保存到数据库。",
+  "Sync cancelled. Completed machines were saved; unfinished machines keep their previous data.": "同步已取消。已完成的设备已保存，未完成的设备保留原数据。",
+  "Sync did not finish. Completed machines were saved; unfinished machines keep their previous data.": "同步未全部完成。已完成的设备已保存，未完成的设备保留原数据。",
+  "PostgreSQL is unavailable. Check DATABASE_URL and the database service, then try again.": "无法连接或写入 PostgreSQL，请检查 DATABASE_URL 和数据库服务后重试。",
+  "Configure DATABASE_URL to enable the PostgreSQL database.": "请配置 DATABASE_URL 以启用 PostgreSQL 数据库。",
+  "The database snapshot is incomplete. Please sync again.": "数据库中的设备数据不完整，请重新同步。",
+  "The operation did not finish. Please try again.": "操作未完成，请重试。",
   "Repair data export": "维修数据导出",
   "Company logo": "公司标志",
   "REPAIR TASKS / CSV": "维修任务 / CSV",
   "Repair task export": "维修任务导出",
   "Select machines and creation dates to export repair records as CSV.":
     "选择设备和创建日期，将维修记录导出为 CSV。",
+  "Select machines and creation dates to export repair tasks from closed incidents.":
+    "选择设备和创建日期，导出已关闭故障下的维修任务。",
   "Connected to Smartenance": "已连接 Smartenance",
   "Not connected": "未连接",
   "Connect to Smartenance": "连接 Smartenance",
@@ -34,12 +53,22 @@ const chinese: Record<string, string> = {
   "No machines found": "未找到设备",
   "Select all": "全选",
   Clear: "清空",
+  "All statuses": "全部状态",
+  Open: "待处理（Open）",
+  "In progress (InWork)": "处理中（InWork）",
+  Closed: "已关闭（Closed）",
   "Created from": "创建开始日期",
   "Created through": "创建结束日期",
   "Searching…": "正在查询…",
   "Find repair tasks": "查询维修任务",
+  "Data read at (UTC+8)": "读取完成时间（北京时间）",
+  "Filtered from the last completed query. Click Find repair tasks to refresh.":
+    "已从上次完整查询结果中筛选。点击“查询维修任务”可重新读取最新数据。",
+  "Try other machines, dates, or incident statuses.": "请调整设备、日期或故障状态。",
   "Filtered by repair task creation time · UTC+8 (Beijing) · Both dates included":
     "按维修任务创建时间筛选 · 北京时间 UTC+8 · 包含起止日期全天",
+  "Closed incidents only · All repair results included":
+    "仅查询已关闭故障（Closed）· 包含所有维修结果",
   Cancel: "取消",
   Results: "查询结果",
   "Each row is a repair task linked to an incident.": "每行对应故障记录下的一个维修任务。",
@@ -61,6 +90,8 @@ const chinese: Record<string, string> = {
   Next: "下一页",
   "Collecting repair records": "正在读取维修记录",
   "No repair tasks match these filters": "没有符合筛选条件的维修任务",
+  "No repair tasks in closed incidents match these filters":
+    "已关闭故障中没有符合筛选条件的维修任务",
   "Your repair records, ready to export": "查询并导出维修记录",
   "Export becomes available once all records have been read.": "读取全部记录后即可导出。",
   "Try other machines or a wider creation date range.": "请尝试选择其他设备或扩大创建日期范围。",
@@ -77,6 +108,7 @@ const chinese: Record<string, string> = {
   "Connect to Smartenance first.": "请先连接 Smartenance。",
   "A selected machine is unavailable.": "所选设备不可用。",
   "Reading incidents for the selected machines…": "正在读取所选设备的故障记录…",
+  "Loading machines…": "正在加载设备列表…",
   "Query failed.": "查询失败。",
   "The server did not return any query results.": "服务器未返回查询结果。",
   "The query did not finish. Please try again. Partial results cannot be exported.":
@@ -90,6 +122,7 @@ const chinese: Record<string, string> = {
   "The start date cannot be after the end date.": "开始日期不能晚于结束日期。",
   "Select at least one valid machine.": "请至少选择一台有效设备。",
   "Select a start and end date.": "请选择起止日期。",
+  "Select a valid incident status.": "请选择有效的故障状态。",
   "The access token has expired or is invalid. Reconnect to continue. This request will not be retried automatically.":
     "访问令牌已过期或无效，请重新连接。此请求不会自动重试。",
   "Festo has limited the request rate.": "Festo 已限制请求频率。",
@@ -167,12 +200,15 @@ const chinese: Record<string, string> = {
     "Festo 返回了重复的维修任务，请重新查询。",
   "More than 100,000 tasks matched. Select fewer machines or a shorter date range.":
     "匹配任务超过 100,000 条，请减少设备或缩小日期范围。",
-  "This application only supports access from this computer.": "此程序仅支持从本机访问。",
-  "Only requests from the local application are accepted.": "仅接受来自本地程序的请求。",
+  "This access address is not allowed. Contact the administrator to configure the server address.":
+    "当前访问地址未获允许，请联系管理员配置服务器访问地址。",
+  "The server access address configuration is invalid.": "服务器访问地址配置无效，请联系管理员。",
+  "Only requests from this application are accepted.": "仅接受来自本程序的请求。",
   "The request format is invalid.": "请求格式无效。",
   "The request body is empty.": "请求内容为空。",
   "The request body is too large.": "请求内容过大。",
   "The request body is invalid.": "请求内容无效。",
+  "Bulk export unavailable for this machine. Using the standard query.": "此设备的批量导出不可用，正在自动使用标准查询。",
   "Select a connection method.": "请选择连接方式。",
 };
 
@@ -180,6 +216,12 @@ export function translate(text: string, language: Language): string {
   if (language === "en" || !text) return text;
   if (chinese[text]) return chinese[text];
   const patterns: [RegExp, (...args: string[]) => string][] = [
+    [/^Database: (\d+) machines$/, (_, n) => `数据库读取：${n} 台设备`],
+    [/^Reading database for (.+)…$/, (_, name) => `正在从数据库读取 ${name}…`],
+    [/^Updating database for (.+)…$/, (_, name) => `正在从 Festo 读取并更新 ${name}…`],
+    [/^Loading complete machine data: (\d+) incidents read\.$/, (_, n) => `正在读取设备完整数据，已读取 ${n} 条故障。`],
+    [/^Synced (\d+) of (\d+) machines · (\d+) incidents\.$/, (_, n, total, incidents) => `已同步 ${n} / ${total} 台设备，共 ${incidents} 条故障。`],
+    [/^Sync complete: (\d+) machines · (\d+) incidents\.$/, (_, n, incidents) => `同步完成：${n} 台设备，共 ${incidents} 条故障。`],
     [/^Connected\. Loaded (\d+) machines\.$/, (_, n) => `已连接，已加载 ${n} 台设备。`],
     [
       /^Loaded (\d+) machines\. Reconnect when your access token expires\.$/,
@@ -191,9 +233,16 @@ export function translate(text: string, language: Language): string {
       (_, n) => `已生成包含 ${n} 个维修任务的 CSV，请查看浏览器下载。`,
     ],
     [/^Reading incidents for (.+)…$/, (_, name) => `正在读取 ${name} 的故障记录…`],
+    [/^Reading bulk export for (.+)…$/, (_, name) => `正在批量读取 ${name} 的故障及维修记录…`],
+    [/^Bulk export failed \((\d+)\)\. Using the standard query\.$/, (_, status) => `批量导出失败（${status}），正在自动使用标准查询。`],
+    [/^Bulk export: (\d+) machines · Standard query: (\d+) machines$/, (_, bulk, standard) => `批量导出：${bulk} 台设备 · 标准查询：${standard} 台设备`],
     [
       /^Checked (\d+) incidents\. Found (\d+) matching repair tasks\.$/,
       (_, n, count) => `已检查 ${n} 条故障记录，找到 ${count} 个匹配的维修任务。`,
+    ],
+    [
+      /^Checked (\d+) incidents\. Found (\d+) repair tasks in closed incidents\.$/,
+      (_, n, count) => `已检查 ${n} 条故障记录，在已关闭故障中找到 ${count} 个维修任务。`,
     ],
     [
       /^Festo rate limit reached\. Waiting at least (\d+) seconds, then resuming automatically\. You can cancel this query\.$/,
@@ -224,6 +273,18 @@ export function translate(text: string, language: Language): string {
     [
       /^Please wait at least (\d+) seconds before trying again\.$/,
       (_, n) => `请等待至少 ${n} 秒后重试。`,
+    ],
+    [
+      /^Festo returned an error \((\d+)\) while (loading machines|reading bulk export|downloading bulk export|loading custom fields|reading incident list|reading incident details|reading API data)\. No results were exported\.$/,
+      (_, status, operation) => `${({
+        "loading machines": "加载设备列表",
+        "reading bulk export": "读取批量导出",
+        "downloading bulk export": "下载批量导出文件",
+        "loading custom fields": "加载自定义栏位",
+        "reading incident list": "读取故障列表",
+        "reading incident details": "读取故障详情",
+        "reading API data": "读取 API 数据",
+      } as Record<string, string>)[operation]}时 Festo 返回错误（${status}），未导出任何结果。`,
     ],
     [
       /^Festo returned an error \((\d+)\)\. No results were exported\.$/,

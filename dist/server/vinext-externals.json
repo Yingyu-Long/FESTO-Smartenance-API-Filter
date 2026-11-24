@@ -1,4 +1,5 @@
 [
+  "pg",
   "react",
   "react-dom",
   "ipaddr.js"

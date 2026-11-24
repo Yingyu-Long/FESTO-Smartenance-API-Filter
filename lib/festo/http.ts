@@ -5,12 +5,6 @@ export const NO_STORE = {
   "X-Content-Type-Options": "nosniff",
 };
 export function checkRequest(request: Request) {
-  const url = new URL(request.url);
-  if (!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))
-    throw new FestoError("This application only supports access from this computer.", 403);
-  const origin = request.headers.get("origin");
-  if (origin !== url.origin || request.headers.get("sec-fetch-site") === "cross-site")
-    throw new FestoError("Only requests from the local application are accepted.", 403);
   if (!request.headers.get("content-type")?.startsWith("application/json"))
     throw new FestoError("The request format is invalid.", 400);
 }

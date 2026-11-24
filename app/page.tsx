@@ -1,11 +1,13 @@
 "use client";
 import Image from "next/image";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownToLine,
   Cable,
   CalendarDays,
   Factory,
+  Database,
+  RefreshCw,
   ListFilter,
   LoaderCircle,
   Search,
@@ -44,12 +46,14 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { Pagination, PaginationContent, PaginationItem } from "@/components/ui/pagination";
-import { chinaDate, formatTime, resultLabels, toCsv, validateFilters } from "@/lib/festo/shared";
-import type { ExportEvent, Filters, Machine, RepairRow } from "@/lib/festo/types";
+import { chinaDate, customFieldColumns, filterExistingResult, formatTime, INCIDENT_STATE_OPTIONS, incidentStateLabels, resultLabels, toCsv, validateFilters } from "@/lib/festo/shared";
+import type { ExportEvent, Filters, IncidentStateFilter, Machine, RepairResult, SyncResult } from "@/lib/festo/types";
 
 import { translate, type Language } from "@/lib/festo/i18n";
 
-type Result = { rows: RepairRow[]; scanned: number; filters: Filters };
+import { readOperationResult } from "@/lib/festo/stream-client";
+
+type Result = RepairResult;
 const firstPolicy = "b2c_1_apisignin_ropc";
 export default function Home() {
   const [language, setLanguage] = useState<Language>("en");
@@ -66,6 +70,7 @@ export default function Home() {
   }, [language]);
   function changeLanguage(value: Language) {
     setLanguage(value);
+    setPage(1);
     try {
       localStorage.setItem("festo-language", value);
     } catch {}
@@ -81,26 +86,51 @@ export default function Home() {
   const [selected, setSelected] = useState<string[]>([]);
   const [from, setFrom] = useState(today.slice(0, 8) + "01");
   const [to, setTo] = useState(today);
+  const [incidentState, setIncidentState] = useState<IncidentStateFilter>("All");
   const [connecting, setConnecting] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSync, setLastSync] = useState<SyncResult | null>(null);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [result, setResult] = useState<Result | null>(null);
+  const sourceResult = useRef<Result | null>(null);
+  const snapshotRows = sourceResult.current?.rows;
+  const customColumns = useMemo(() => customFieldColumns(snapshotRows ?? [], language), [snapshotRows, language]);
   const [page, setPage] = useState(1);
   const abortRef = useRef<AbortController | null>(null);
   const lock = useRef(false);
   const anchor = useComboboxAnchor();
-  const latest = useRef({ machines, selected, from, to, result, busy, token });
+  const latest = useRef({ machines, selected, from, to, incidentState, result, busy, token });
   useLayoutEffect(() => {
-    latest.current = { machines, selected, from, to, result, busy, token };
-  }, [machines, selected, from, to, result, busy, token]);
+    latest.current = { machines, selected, from, to, incidentState, result, busy, token };
+  }, [machines, selected, from, to, incidentState, result, busy, token]);
   useEffect(() => () => abortRef.current?.abort(), []);
   function clearResult() {
+    sourceResult.current = null;
     setResult(null);
     setPage(1);
     setNotice("");
     setError("");
+  }
+  function changeFilters(patch: Partial<Filters>) {
+    const current = latest.current;
+    const filters = {
+      machineIds: current.selected, from: current.from, to: current.to, incidentState: current.incidentState,
+      ...patch,
+    };
+    setSelected(filters.machineIds);
+    setFrom(filters.from);
+    setTo(filters.to);
+    setIncidentState(filters.incidentState);
+    const filtered = filterExistingResult(sourceResult.current, filters);
+    // Keep the original snapshot when temporarily selecting an uncovered range.
+    // A fresh query or disconnect still discards it entirely.
+    setResult(filtered);
+    setPage(1);
+    setError("");
+    setNotice(filtered ? "Filtered from the last completed query. Click Find repair tasks to refresh." : "");
   }
   async function connect(event: React.SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -111,6 +141,7 @@ export default function Home() {
     setToken("");
     setMachines([]);
     setSelected([]);
+    setLastSync(null);
     try {
       const response = await fetch("/api/connect", {
         method: "POST",
@@ -154,6 +185,7 @@ export default function Home() {
     setPassword("");
     setMachines([]);
     setSelected([]);
+    setLastSync(null);
     clearResult();
   }
   async function query(input?: Filters) {
@@ -165,6 +197,7 @@ export default function Home() {
         machineIds: current.selected,
         from: current.from,
         to: current.to,
+        incidentState: current.incidentState,
       },
     );
     if (filters.machineIds.some((id) => !current.machines.some((m) => m.id === id)))
@@ -172,6 +205,7 @@ export default function Home() {
     setSelected(filters.machineIds);
     setFrom(filters.from);
     setTo(filters.to);
+    setIncidentState(filters.incidentState);
     clearResult();
     setBusy(true);
     lock.current = true;
@@ -232,7 +266,9 @@ export default function Home() {
         throw new Error(
           "The query did not finish. Please try again. Partial results cannot be exported.",
         );
-      setResult({ ...finalResult, filters });
+      const completed = { ...finalResult, filters, fetchedAt: new Date().toISOString() };
+      sourceResult.current = completed;
+      setResult(completed);
       setPage(1);
       return { count: finalResult.rows.length, scanned: finalResult.scanned };
     } catch (e) {
@@ -250,11 +286,46 @@ export default function Home() {
       setProgress("");
     }
   }
+  async function syncAll() {
+    if (lock.current) return;
+    const current = latest.current;
+    if (!current.token) return;
+    lock.current = true;
+    setBusy(true);
+    setSyncing(true);
+    setLastSync(null);
+    clearResult();
+    setProgress("Loading machines…");
+    const abort = new AbortController();
+    abortRef.current = abort;
+    try {
+      const response = await fetch("/api/sync", {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${current.token}` },
+        body: "{}", cache: "no-store", signal: abort.signal,
+      });
+      const completed = await readOperationResult<SyncResult>(response, setProgress, () => setToken(""));
+      abort.signal.throwIfAborted();
+      setLastSync(completed);
+      setMachines(completed.machines);
+      setSelected((ids) => ids.filter((id) => completed.machines.some((m) => m.id === id)));
+      setNotice(`Sync complete: ${completed.syncedMachines} machines · ${completed.incidents} incidents.`);
+    } catch (error) {
+      setError(abort.signal.aborted ? "Sync cancelled. Completed machines were saved; unfinished machines keep their previous data."
+        : `${error instanceof Error ? error.message : "Query failed."}`);
+      if (!abort.signal.aborted) setNotice("Sync did not finish. Completed machines were saved; unfinished machines keep their previous data.");
+    } finally {
+      setBusy(false);
+      setSyncing(false);
+      lock.current = false;
+      abortRef.current = null;
+      setProgress("");
+    }
+  }
   function download() {
     const current = latest.current;
     if (!current.result?.rows.length || current.busy)
       throw new Error("Complete a query with matching results before exporting.");
-    const csv = toCsv(current.result.rows, language),
+    const csv = toCsv(current.result.rows, language, customColumns),
       blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob),
       link = document.createElement("a");
@@ -295,7 +366,7 @@ export default function Home() {
       {
         name: "query_repair_tasks",
         description:
-          "Query repair tasks by machine and creation date in UTC+8 using the connected Smartenance account, and update the page results. The user must connect an account first.",
+          "Query repair tasks by machine, incident status and repair task creation date in UTC+8 using the connected Smartenance account. Incident status can be All (default), Open, InWork or Closed. All repair results are included. The user must connect an account first.",
         inputSchema: {
           type: "object",
           properties: {
@@ -306,6 +377,11 @@ export default function Home() {
             },
             from: { type: "string", format: "date" },
             to: { type: "string", format: "date" },
+            incidentState: {
+              type: "string",
+              enum: [...INCIDENT_STATE_OPTIONS],
+              default: "All",
+            },
           },
           required: ["machineIds", "from", "to"],
           additionalProperties: false,
@@ -328,7 +404,8 @@ export default function Home() {
           return {
             connected: !!s.token,
             machines: s.machines,
-            filters: { machineIds: s.selected, from: s.from, to: s.to },
+            filters: { machineIds: s.selected, from: s.from, to: s.to, incidentState: s.incidentState },
+            fetchedAt: s.result?.fetchedAt ?? null,
             busy: s.busy,
             count: s.result?.rows.length ?? null,
           };
@@ -403,9 +480,6 @@ export default function Home() {
           <div>
             <p className="eyebrow">{t("REPAIR TASKS / CSV")}</p>
             <h1>{t("Repair task export")}</h1>
-            <p className="muted">
-              {t("Select machines and creation dates to export repair records as CSV.")}
-            </p>
           </div>
           <span className={`connection-status ${token ? "connected" : ""}`}>
             {token ? t("Connected to Smartenance") : t("Not connected")}
@@ -524,6 +598,17 @@ export default function Home() {
             </p>
           )}
         </section>
+        <section className="database-panel" aria-labelledby="database-title">
+          <div className="section-label">
+            <Database size={19} />
+            <h2 id="database-title">{t("PostgreSQL database")}</h2>
+            <Button className="sync-button" variant="outline" disabled={!token || busy || connecting} onClick={() => void syncAll()}>
+              {syncing ? <LoaderCircle className="spin" /> : <RefreshCw />}
+              {t(syncing ? "Syncing…" : "Sync all machines")}
+            </Button>
+          </div>
+          {lastSync && <p className="muted">{t("Last full sync (UTC+8)")}: {formatTime(lastSync.syncedAt)}</p>}
+        </section>
         <section className="filter-panel" aria-labelledby="filters-title">
           <div className="section-label">
             <ListFilter size={19} />
@@ -548,8 +633,7 @@ export default function Home() {
                   items={machines.map((m) => m.id)}
                   value={selected}
                   onValueChange={(v) => {
-                    setSelected(v);
-                    clearResult();
+                    changeFilters({ machineIds: v });
                   }}
                   itemToStringLabel={machineLabel}
                   disabled={!token || busy}
@@ -592,8 +676,7 @@ export default function Home() {
                     type="button"
                     disabled={!token || busy}
                     onClick={() => {
-                      setSelected(machines.map((m) => m.id));
-                      clearResult();
+                      changeFilters({ machineIds: machines.map((m) => m.id) });
                     }}
                   >
                     {t("Select all")}
@@ -602,8 +685,7 @@ export default function Home() {
                     type="button"
                     disabled={!selected.length || busy}
                     onClick={() => {
-                      setSelected([]);
-                      clearResult();
+                      changeFilters({ machineIds: [] });
                     }}
                   >
                     {t("Clear")}
@@ -611,6 +693,29 @@ export default function Home() {
                   <span>{t(`${selected.length} selected`)}</span>
                 </div>
               </div>
+              <label htmlFor="incident-state">
+                <span>{t("Incident status")}</span>
+                <Select<IncidentStateFilter>
+                  value={incidentState}
+                  onValueChange={(value) => {
+                    if (value) {
+                      changeFilters({ incidentState: value });
+                    }
+                  }}
+                  disabled={busy}
+                >
+                  <SelectTrigger id="incident-state" aria-label={t("Incident status")}>
+                    <SelectValue>{t(incidentStateLabels[incidentState])}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {INCIDENT_STATE_OPTIONS.map((state) => (
+                      <SelectItem key={state} value={state}>
+                        {t(incidentStateLabels[state])}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
               <label htmlFor="date-from">
                 <span>
                   <CalendarDays size={16} />
@@ -621,8 +726,7 @@ export default function Home() {
                   type="date"
                   value={from}
                   onChange={(e) => {
-                    setFrom(e.target.value);
-                    clearResult();
+                    changeFilters({ from: e.target.value });
                   }}
                   required
                   disabled={busy}
@@ -636,8 +740,7 @@ export default function Home() {
                   value={to}
                   min={from}
                   onChange={(e) => {
-                    setTo(e.target.value);
-                    clearResult();
+                    changeFilters({ to: e.target.value });
                   }}
                   required
                   disabled={busy}
@@ -645,7 +748,7 @@ export default function Home() {
               </label>
               <Button type="submit" disabled={!token || !selected.length || busy || connecting}>
                 {busy ? <LoaderCircle className="spin" /> : <Search />}
-                {busy ? t("Searching…") : t("Find repair tasks")}
+                {busy ? t(syncing ? "Syncing…" : "Searching…") : t("Find repair tasks")}
               </Button>
             </div>
           </form>
@@ -682,6 +785,10 @@ export default function Home() {
                   {t(
                     `${result.filters.from} — ${result.filters.to} · ${result.scanned} incidents checked`,
                   )}
+                  {result.fetchedAt && <> · {t("Data read at (UTC+8)")}: {formatTime(result.fetchedAt)}</>}
+                  {result.retrieval?.databaseMachines !== undefined && <><br />{t(`Database: ${result.retrieval.databaseMachines} machines`)}</>}
+                  {result.retrieval?.oldestSnapshotAt && <> · {t("Oldest snapshot (UTC+8)")}: {formatTime(result.retrieval.oldestSnapshotAt)}</>}
+                  {result.retrieval && <><br />{t(`Bulk export: ${result.retrieval.bulkMachines} machines · Standard query: ${result.retrieval.standardMachines} machines`)}</>}
                 </p>
               )}
             </div>
@@ -780,7 +887,7 @@ export default function Home() {
                 </div>
                 <EmptyTitle>
                   {busy
-                    ? t("Collecting repair records")
+                    ? t(syncing ? "Syncing database" : "Collecting repair records")
                     : result
                       ? t("No repair tasks match these filters")
                       : t("Your repair records, ready to export")}
@@ -788,8 +895,8 @@ export default function Home() {
                 {(busy || result) && (
                   <EmptyDescription>
                     {busy
-                      ? t("Export becomes available once all records have been read.")
-                      : t("Try other machines or a wider creation date range.")}
+                      ? t(syncing ? "Completed machines are saved as sync progresses." : "Export becomes available once all records have been read.")
+                      : t("Try other machines, dates, or incident statuses.")}
                   </EmptyDescription>
                 )}
               </EmptyHeader>
