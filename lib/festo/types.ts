@@ -87,11 +87,41 @@ export interface MachineIncidents {
   source: "database" | "bulk" | "standard";
   syncedAt: string;
 }
+export interface SyncDiffStats {
+  inserted: number;
+  updated: number;
+  unchanged: number;
+  deleted: number;
+}
 export interface SyncResult {
   machines: Machine[];
   syncedMachines: number;
   incidents: number;
   syncedAt: string;
+  diff?: SyncDiffStats;
+}
+export interface SyncRunSummary {
+  id: string;
+  triggerSource: "scheduled" | "manual";
+  status: "running" | "succeeded" | "failed";
+  machinesTotal: number;
+  machinesSynced: number;
+  incidentsTotal: number;
+  diff: SyncDiffStats;
+  startedAt: string;
+  finishedAt: string | null;
+  errorMessage: string | null;
+}
+export interface AutoSyncStatus {
+  databaseConfigured: boolean;
+  databaseAvailable: boolean;
+  autoSyncEnabled: boolean;
+  schedule: {
+    daysOfMonth: number[];
+    timeUtc8: string;
+    nextRunAt: string | null;
+  };
+  lastScheduledRun: SyncRunSummary | null;
 }
 export type Progress = {
   type: "progress";

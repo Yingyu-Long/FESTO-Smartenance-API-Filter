@@ -15,6 +15,8 @@
     "format": "oxfmt",
     "typecheck": "tsc --noEmit",
     "db:init": "node --env-file-if-exists=.env scripts/db-init.mjs",
+    "db:sync": "node --env-file-if-exists=.env scripts/sync-db.mjs",
+    "db:scheduler": "node --env-file-if-exists=.env scripts/sync-scheduler.mjs",
     "test:postgres": "node --env-file-if-exists=.env --test tests/postgres.integration.test.mjs",
     "db:local": "node --env-file-if-exists=.env scripts/local-db.mjs start",
     "db:stop": "node --env-file-if-exists=.env scripts/local-db.mjs stop",

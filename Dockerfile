@@ -19,6 +19,8 @@ COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/public ./public
 COPY --chown=node:node db ./db
+COPY --chown=node:node lib ./lib
+COPY --chown=node:node scripts ./scripts
 USER node
 EXPOSE 3000
 CMD ["node", "node_modules/vinext/dist/cli.js", "start", "-H", "0.0.0.0", "-p", "3000"]

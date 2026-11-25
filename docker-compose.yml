@@ -8,12 +8,39 @@ services:
       NODE_ENV: production
       PORT: 3000
       DATABASE_URL: postgres://smartenance:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/smartenance
+      SYNC_ENABLED: ${SYNC_ENABLED:-true}
+      SYNC_DAYS_OF_MONTH: ${SYNC_DAYS_OF_MONTH:-25}
+      SYNC_TIME_UTC8: ${SYNC_TIME_UTC8:-02:00}
+      FESTO_SYNC_CONFIGURED: ${FESTO_SYNC_USERNAME:+1}
     depends_on:
       db:
         condition: service_healthy
     ports:
       - "3000:3000"
     restart: unless-stopped
+
+  sync:
+    image: smartenance-api-filter:latest
+    command: ["node", "scripts/sync-scheduler.mjs"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://smartenance:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/smartenance
+      FESTO_SYNC_USERNAME: ${FESTO_SYNC_USERNAME:-}
+      FESTO_SYNC_PASSWORD: ${FESTO_SYNC_PASSWORD:-}
+      FESTO_SYNC_POLICY: ${FESTO_SYNC_POLICY:-auto}
+      SYNC_ENABLED: ${SYNC_ENABLED:-true}
+      SYNC_DAYS_OF_MONTH: ${SYNC_DAYS_OF_MONTH:-25}
+      SYNC_TIME_UTC8: ${SYNC_TIME_UTC8:-02:00}
+      SYNC_CATCH_UP: ${SYNC_CATCH_UP:-true}
+      SYNC_MAX_RETRIES: ${SYNC_MAX_RETRIES:-2}
+      SYNC_RETRY_DELAY_SECONDS: ${SYNC_RETRY_DELAY_SECONDS:-1800}
+    depends_on:
+      festo:
+        condition: service_started
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
   db:
     image: postgres:17-alpine
     environment:
@@ -33,4 +60,3 @@ services:
 
 volumes:
   postgres_data:
-  

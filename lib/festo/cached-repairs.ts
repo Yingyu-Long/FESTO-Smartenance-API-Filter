@@ -2,7 +2,7 @@ import { FestoClient, FestoError, collectRepairs } from './client.ts';
 import { BulkExportUnsupported } from './bulk-export.ts';
 import { accountKeyForVerifiedToken, getIncidentStore, type IncidentStore } from './database.ts';
 import { isIncidentState, UUID } from './shared.ts';
-import type { Filters, Incident, Machine, MachineIncidents, Progress, SyncResult } from './types.ts';
+import type { Filters, Incident, Machine, MachineIncidents, Progress, SyncDiffStats, SyncResult } from './types.ts';
 
 export function validateSnapshot(incidents: Incident[], machineId: string) {
   const seen = new Set<string>(), tasks = new Set<string>();
@@ -69,7 +69,7 @@ export class MachineLoader {
 export async function readThroughMachine(
   store: IncidentStore, account: string, client: FestoClient, loader: MachineLoader, machine: Machine,
   refresh: boolean, report: (message: string) => void, signal?: AbortSignal,
-): Promise<MachineIncidents> {
+): Promise<MachineIncidents & { diff?: SyncDiffStats }> {
   signal?.throwIfAborted();
   client.throwIfAborted();
   if (!refresh) {
@@ -85,11 +85,17 @@ export async function readThroughMachine(
   const fresh = await loader.load(client, machine, report);
   signal?.throwIfAborted();
   client.throwIfAborted();
-  await store.replace(account, machine, fresh.incidents, revision, signal);
+  const stats = await store.replace(account, machine, fresh.incidents, revision, signal);
   // Read the committed snapshot: a newer concurrent sync may have won.
   const saved = await store.read(account, machine.id);
   if (!saved) throw new FestoError('The database snapshot is incomplete. Please sync again.', 503);
-  return { ...saved, source: fresh.source };
+  const diff = stats ? {
+    inserted: stats.inserted,
+    updated: stats.updated,
+    unchanged: stats.unchanged,
+    deleted: stats.deleted,
+  } : undefined;
+  return { ...saved, source: fresh.source, diff };
 }
 
 export async function collectCachedRepairs(
@@ -114,28 +120,79 @@ export async function collectCachedRepairs(
 
 export async function syncDatabase(
   token: string, emit: (event: Progress) => void, signal: AbortSignal,
-  options: { client?: FestoClient; store?: IncidentStore } = {},
+  options: {
+    client?: FestoClient;
+    store?: IncidentStore;
+    expiresIn?: number | null;
+    refreshToken?: (signal: AbortSignal) => Promise<{ token: string; expiresIn: number | null }>;
+    createClient?: (token: string, signal: AbortSignal) => FestoClient;
+  } = {},
 ): Promise<SyncResult> {
-  const client = options.client ?? new FestoClient(token, { signal });
+  const makeClient = options.createClient ?? ((nextToken: string, abort: AbortSignal) => new FestoClient(nextToken, { signal: abort }));
+  let activeClient = options.client ?? makeClient(token, signal);
   let syncedMachines = 0, incidents = 0;
+  const diff: SyncDiffStats = { inserted: 0, updated: 0, unchanged: 0, deleted: 0 };
   const report = (message: string) => emit({ type: 'progress', message, scanned: incidents, matched: syncedMachines });
-  client.onRateLimit = (seconds) => report(`Festo rate limit reached. Waiting at least ${seconds} seconds, then resuming automatically. You can cancel this query.`);
+  const attachRateLimit = (client: FestoClient) => {
+    client.onRateLimit = (seconds) => report(`Festo rate limit reached. Waiting at least ${seconds} seconds, then resuming automatically. You can cancel this query.`);
+  };
+  attachRateLimit(activeClient);
+  const computeRenewAt = (expiresIn?: number | null) =>
+    typeof expiresIn === 'number' && expiresIn > 0
+      ? Date.now() + Math.max(30_000, (expiresIn - 300) * 1000)
+      : Number.POSITIVE_INFINITY;
+  let renewAt = computeRenewAt(options.expiresIn);
+
   try {
     report('Loading machines…');
-    const machines = await client.machines();
+    const machines = await activeClient.machines();
     signal.throwIfAborted();
     const account = accountKeyForVerifiedToken(token);
     const store = options.store ?? getIncidentStore();
     const loader = new MachineLoader();
+
+    const renewSession = async () => {
+      if (!options.refreshToken) return false;
+      report('Refreshing Smartenance session…');
+      const next = await options.refreshToken(signal);
+      if (accountKeyForVerifiedToken(next.token) !== account) {
+        throw new FestoError('Refreshed token belongs to a different Smartenance account. Sync stopped.', 401);
+      }
+      activeClient.cancel();
+      activeClient = makeClient(next.token, signal);
+      attachRateLimit(activeClient);
+      renewAt = computeRenewAt(next.expiresIn);
+      return true;
+    };
+
     // A complete machine is committed independently. Cancellation/failure keeps
     // earlier completed machines, while the failed machine keeps its old snapshot.
     for (const machine of machines) {
-      const saved = await readThroughMachine(store, account, client, loader, machine, true, report, signal);
+      if (options.refreshToken && Date.now() >= renewAt) {
+        await renewSession();
+      }
+      let saved: MachineIncidents & { diff?: SyncDiffStats };
+      try {
+        saved = await readThroughMachine(store, account, activeClient, loader, machine, true, report, signal);
+      } catch (error) {
+        if (error instanceof FestoError && error.status === 401 && options.refreshToken) {
+          await renewSession();
+          saved = await readThroughMachine(store, account, activeClient, loader, machine, true, report, signal);
+        } else {
+          throw error;
+        }
+      }
       incidents += saved.incidents.length;
       syncedMachines++;
+      if (saved.diff) {
+        diff.inserted += saved.diff.inserted;
+        diff.updated += saved.diff.updated;
+        diff.unchanged += saved.diff.unchanged;
+        diff.deleted += saved.diff.deleted;
+      }
       report(`Synced ${syncedMachines} of ${machines.length} machines · ${incidents} incidents.`);
     }
     signal.throwIfAborted();
-    return { machines, syncedMachines, incidents, syncedAt: new Date().toISOString() };
-  } catch (error) { client.cancel(); throw error; }
+    return { machines, syncedMachines, incidents, syncedAt: new Date().toISOString(), diff };
+  } catch (error) { activeClient.cancel(); throw error; }
 }

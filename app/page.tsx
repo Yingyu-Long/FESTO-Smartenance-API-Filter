@@ -47,7 +47,7 @@ import {
 } from "@/components/ui/table";
 import { Pagination, PaginationContent, PaginationItem } from "@/components/ui/pagination";
 import { chinaDate, customFieldColumns, filterExistingResult, formatTime, INCIDENT_STATE_OPTIONS, incidentStateLabels, resultLabels, toCsv, validateFilters } from "@/lib/festo/shared";
-import type { ExportEvent, Filters, IncidentStateFilter, Machine, RepairResult, SyncResult } from "@/lib/festo/types";
+import type { AutoSyncStatus, ExportEvent, Filters, IncidentStateFilter, Machine, RepairResult, SyncResult } from "@/lib/festo/types";
 
 import { translate, type Language } from "@/lib/festo/i18n";
 
@@ -91,6 +91,16 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState<SyncResult | null>(null);
+  const [autoSync, setAutoSync] = useState<AutoSyncStatus | null>(null);
+  async function loadAutoSyncStatus() {
+    try {
+      const res = await fetch("/api/sync/status", { cache: "no-store" });
+      if (res.ok) setAutoSync((await res.json()) as AutoSyncStatus);
+    } catch {}
+  }
+  useEffect(() => {
+    void loadAutoSyncStatus();
+  }, []);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -308,7 +318,13 @@ export default function Home() {
       setLastSync(completed);
       setMachines(completed.machines);
       setSelected((ids) => ids.filter((id) => completed.machines.some((m) => m.id === id)));
-      setNotice(`Sync complete: ${completed.syncedMachines} machines · ${completed.incidents} incidents.`);
+      const d = completed.diff;
+      setNotice(
+        d
+          ? `Sync complete: ${completed.syncedMachines} machines · ${completed.incidents} incidents (+${d.inserted} new · ~${d.updated} updated · =${d.unchanged} unchanged · -${d.deleted} removed).`
+          : `Sync complete: ${completed.syncedMachines} machines · ${completed.incidents} incidents.`,
+      );
+      void loadAutoSyncStatus();
     } catch (error) {
       setError(abort.signal.aborted ? "Sync cancelled. Completed machines were saved; unfinished machines keep their previous data."
         : `${error instanceof Error ? error.message : "Query failed."}`);
@@ -607,7 +623,61 @@ export default function Home() {
               {t(syncing ? "Syncing…" : "Sync all machines")}
             </Button>
           </div>
-          {lastSync && <p className="muted">{t("Last full sync (UTC+8)")}: {formatTime(lastSync.syncedAt)}</p>}
+          {autoSync?.autoSyncEnabled && (
+            <p className="muted">
+              {t(`Auto-sync enabled: day ${autoSync.schedule.daysOfMonth.join(", ")} of each month at ${autoSync.schedule.timeUtc8} (UTC+8)`)}
+              {autoSync.schedule.nextRunAt && (
+                <> · {t("Next scheduled sync (UTC+8)")}: {formatTime(autoSync.schedule.nextRunAt)}</>
+              )}
+            </p>
+          )}
+          {autoSync?.lastScheduledRun && (
+            <p className="muted">
+              {t("Last scheduled sync (UTC+8)")}:{" "}
+              {formatTime(autoSync.lastScheduledRun.finishedAt ?? autoSync.lastScheduledRun.startedAt)} ·{" "}
+              <span
+                className={`result-tag ${
+                  autoSync.lastScheduledRun.status === "succeeded"
+                    ? "success"
+                    : autoSync.lastScheduledRun.status === "failed"
+                      ? "failure"
+                      : "unknown"
+                }`}
+              >
+                {t(
+                  autoSync.lastScheduledRun.status === "succeeded"
+                    ? "Scheduled sync succeeded"
+                    : autoSync.lastScheduledRun.status === "failed"
+                      ? "Scheduled sync failed"
+                      : "Scheduled sync running",
+                )}
+              </span>
+              {autoSync.lastScheduledRun.status === "succeeded" && (
+                <>
+                  {" · "}
+                  {t(
+                    `+${autoSync.lastScheduledRun.diff.inserted} new · ~${autoSync.lastScheduledRun.diff.updated} updated · =${autoSync.lastScheduledRun.diff.unchanged} unchanged · -${autoSync.lastScheduledRun.diff.deleted} removed`,
+                  )}
+                </>
+              )}
+              {autoSync.lastScheduledRun.status === "failed" && autoSync.lastScheduledRun.errorMessage && (
+                <> · {t(autoSync.lastScheduledRun.errorMessage)}</>
+              )}
+            </p>
+          )}
+          {lastSync && (
+            <p className="muted">
+              {t("Last full sync (UTC+8)")}: {formatTime(lastSync.syncedAt)}
+              {lastSync.diff && (
+                <>
+                  {" · "}
+                  {t(
+                    `+${lastSync.diff.inserted} new · ~${lastSync.diff.updated} updated · =${lastSync.diff.unchanged} unchanged · -${lastSync.diff.deleted} removed`,
+                  )}
+                </>
+              )}
+            </p>
+          )}
         </section>
         <section className="filter-panel" aria-labelledby="filters-title">
           <div className="section-label">

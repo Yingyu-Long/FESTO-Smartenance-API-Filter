@@ -6,6 +6,13 @@ const chinese: Record<string, string> = {
   "Syncing…": "正在同步…",
   "Syncing database": "正在同步数据库",
   "Last full sync (UTC+8)": "本次会话上次完整同步（北京时间）",
+  "Next scheduled sync (UTC+8)": "下次自动同步（北京时间）",
+  "Last scheduled sync (UTC+8)": "上次自动同步（北京时间）",
+  "Refreshing Smartenance session…": "正在续签 Smartenance 登录会话…",
+  "Refreshed token belongs to a different Smartenance account. Sync stopped.": "续签后的令牌属于另一个 Smartenance 账号，已停止同步。",
+  "Scheduled sync succeeded": "自动同步成功",
+  "Scheduled sync running": "正在执行自动同步",
+  "Scheduled sync failed": "自动同步失败",
   "Oldest snapshot (UTC+8)": "最早数据读取时间（北京时间）",
   "Queries use saved data first. Missing machines are fetched from Festo and saved automatically. Sync refreshes all accessible machines, including existing incidents and new repairs.":
     "查询优先读取数据库，未缓存的设备自动从 Festo 获取并保存。同步会更新全部可访问设备，包括已有故障和新增维修任务。",
@@ -221,7 +228,20 @@ export function translate(text: string, language: Language): string {
     [/^Updating database for (.+)…$/, (_, name) => `正在从 Festo 读取并更新 ${name}…`],
     [/^Loading complete machine data: (\d+) incidents read\.$/, (_, n) => `正在读取设备完整数据，已读取 ${n} 条故障。`],
     [/^Synced (\d+) of (\d+) machines · (\d+) incidents\.$/, (_, n, total, incidents) => `已同步 ${n} / ${total} 台设备，共 ${incidents} 条故障。`],
+    [
+      /^Sync complete: (\d+) machines · (\d+) incidents \(\+(\d+) new · ~(\d+) updated · =(\d+) unchanged · -(\d+) removed\)\.$/,
+      (_, n, incidents, ins, upd, unch, del) =>
+        `同步完成：${n} 台设备，共 ${incidents} 条故障（新增 ${ins} · 更新 ${upd} · 未变 ${unch} · 移除 ${del}）。`,
+    ],
     [/^Sync complete: (\d+) machines · (\d+) incidents\.$/, (_, n, incidents) => `同步完成：${n} 台设备，共 ${incidents} 条故障。`],
+    [
+      /^\+(\d+) new · ~(\d+) updated · =(\d+) unchanged · -(\d+) removed$/,
+      (_, ins, upd, unch, del) => `新增 ${ins} · 更新 ${upd} · 未变 ${unch} · 移除 ${del}`,
+    ],
+    [
+      /^Auto-sync enabled: day (.+) of each month at (.+) \(UTC\+8\)$/,
+      (_, days, time) => `服务端自动增量同步已启用：每月 ${days} 日 ${time}（北京时间）`,
+    ],
     [/^Connected\. Loaded (\d+) machines\.$/, (_, n) => `已连接，已加载 ${n} 台设备。`],
     [
       /^Loaded (\d+) machines\. Reconnect when your access token expires\.$/,

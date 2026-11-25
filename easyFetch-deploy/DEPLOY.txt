@@ -10,11 +10,16 @@ included.
    docker load -i easyFetch-images.tar
 2. Create the environment file:
    cp .env.example .env
-3. Edit `.env` and replace `CHANGE_ME` with a strong URL-safe password. Compose
-   reads `.env` from the current directory; do not skip this step.
-4. Start the application and database:
+3. Edit `.env`:
+   - Replace `CHANGE_ME` with a strong URL-safe password.
+   - Set `FESTO_SYNC_USERNAME` and `FESTO_SYNC_PASSWORD` to enable automatic
+     database sync (runs on day 25 of each month at 02:00 UTC+8 by default,
+     plus an initial sync on first deployment).
+4. Start the application, auto-sync scheduler, and database:
    docker compose up -d
 5. Open http://localhost:3000
+   - Check auto-sync logs anytime: `docker compose logs -f sync`
+   - Trigger a manual server sync anytime: `docker compose exec sync node scripts/sync-db.mjs`
 
 The database is stored in the Compose volume named postgres_data. `docker
 compose down` preserves it; `docker compose down -v` deletes it.

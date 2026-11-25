@@ -35,10 +35,21 @@ npm run db:stop
 ## 数据结构和一致性
 
 - `smartenance_machines`：账号隔离键、设备 UUID、设备 JSON、快照版本、故障数量、成功读取时间。只有完整成功的设备读取才会写入此表。
-- `smartenance_incidents`：账号隔离键、设备 UUID、故障 UUID、完整故障 JSON（包含维修任务、自定义字段及其他 API 返回的详情）。
+- `smartenance_incidents`：账号隔离键、设备 UUID、故障 UUID、完整故障 JSON（包含维修任务、自定义字段及其他 API 返回的详情）、`row_hash`（确定性 SHA-256 指纹）与 `updated_at`。
 - `smartenance_snapshot_revision`：读取开始时分配版本，防止较早发起但较晚完成的请求覆盖更新的数据。
+- `smartenance_sync_runs`：记录服务端自动同步运行历史（起止时间、状态、设备数、新增/更新/未变/移除计数与错误信息，不存储任何账号凭证或令牌）。
 
-每台设备使用同一个 PostgreSQL 连接中的事务更新，写入任何一条记录失败则整体回滚。事务级锁避免同台设备并发写入相互干扰。查询用单条 SQL 读取完整快照，避免读到新旧混合数据；实际记录数与完整性计数不一致时重新从 API 获取。
+每台设备使用同一个 PostgreSQL 连接中的事务更新，写入任何一条记录失败则整体回滚。事务级锁避免同台设备并发写入相互干扰。入库采用本地 `row_hash` 增量比对：`row_hash` 未变化的记录直接跳过写库，新增与修改的记录通过 `INSERT ... ON CONFLICT DO UPDATE` 增量更新，仅对远端已不存在的故障执行精准 `DELETE`。查询用单条 SQL 读取完整快照，避免读到新旧混合数据；实际记录数与完整性计数不一致时重新从 API 获取。
+
+## 服务端自动同步与 Docker 部署
+
+服务端通过独立常驻调度进程 `scripts/sync-scheduler.mjs`（Docker Compose 中的 `sync` 服务）实现无人值守同步：
+
+- **默认计划**：北京时间每月 `25` 日 `02:00`（`SYNC_DAYS_OF_MONTH=25`、`SYNC_TIME_UTC8=02:00`；如需每月多次也可设为逗号分隔日期如 `10,25`）。
+- **首次部署与漏跑补偿**：启用 `SYNC_CATCH_UP=true`（默认）时，若尚未执行过自动同步或因停机错过最近一次计划时间点，容器启动后会自动补跑一次。
+- **自动登录与长耗时续签**：在 `.env` 配置 `FESTO_SYNC_USERNAME` 与 `FESTO_SYNC_PASSWORD`（`FESTO_SYNC_POLICY=auto` 自动兼容两种官方 ROPC 策略）。同步耗时较长时会在令牌到期前或遇到 `401` 时自动续签。
+- **防重与重试**：通过 PostgreSQL 会话级咨询锁（`pg_try_advisory_lock`）防止并发重复执行；遇到临时网络或上游故障自动按 `SYNC_MAX_RETRIES` 与 `SYNC_RETRY_DELAY_SECONDS` 重试。
+- **手动触发单次服务端同步**：`npm run db:sync`（或容器内 `docker compose exec sync node scripts/sync-db.mjs`）。
 
 同步按设备提交。取消或失败时，已经同步成功的设备会保留新数据；未完成设备保留旧快照，下次同步重新读取。API 429 重试与原限流保护仍有效。批量接口不可用时回退标准分页和详情；不对全量缓存应用时间或状态过滤。读取故障详情失败时不能写入不完整快照。
 
