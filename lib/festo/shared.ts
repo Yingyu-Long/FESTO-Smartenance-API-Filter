@@ -134,7 +134,7 @@ export function customFieldLabel(field: CustomFieldValue, language: Language) {
     : field.scope === "incident" ? "Incident" : "Repair task";
   return `${scope} · ${language === "zh" && field.labelZh ? field.labelZh : field.label}`;
 }
-export function customFieldColumns(rows: RepairRow[], language: Language = "en") {
+export function customFieldColumns(rows: RepairRow[], language: Language = "zh") {
   const fields = new Map<string, CustomFieldValue>();
   for (const row of rows) for (const field of row.customFields ?? []) {
     const key = customFieldKey(field);
@@ -148,11 +148,12 @@ export function customFieldColumns(rows: RepairRow[], language: Language = "en")
     label: labels.get(column.label)! > 1 ? `${column.label} (${fields.get(column.key)!.id})` : column.label,
   }));
 }
-export function toCsv(rows: RepairRow[], language: Language = "en", customColumns = customFieldColumns(rows, language)) {
+export function toCsv(rows: RepairRow[], _language: Language = "zh", customColumns = customFieldColumns(rows, "zh")) {
+  const csvLanguage: Language = "zh";
   return (
     "\uFEFF" +
     [
-      [...CSV_COLUMNS.map((c) => csvCell(translate(c.label, language))),
+      [...CSV_COLUMNS.map((c) => csvCell(translate(c.label, csvLanguage))),
         ...customColumns.map((c) => csvCell(c.label))].join(","),
       ...rows.map((row) => {
         const custom = new Map((row.customFields ?? []).map((field) => [customFieldKey(field), field.value]));
@@ -161,7 +162,7 @@ export function toCsv(rows: RepairRow[], language: Language = "en", customColumn
             c.time
               ? formatTime(row[c.key])
               : c.key === "result"
-                ? translate(resultLabels[row.result] ?? row.result, language)
+                ? translate(resultLabels[row.result] ?? row.result, csvLanguage)
                 : row[c.key],
           ),
         ), ...customColumns.map((c) => csvCell(custom.get(c.key) ?? ""))].join(",");

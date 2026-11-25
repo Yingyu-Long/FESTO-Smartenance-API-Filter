@@ -107,7 +107,7 @@ export default function Home() {
   const [result, setResult] = useState<Result | null>(null);
   const sourceResult = useRef<Result | null>(null);
   const snapshotRows = sourceResult.current?.rows;
-  const customColumns = useMemo(() => customFieldColumns(snapshotRows ?? [], language), [snapshotRows, language]);
+  const customColumns = useMemo(() => customFieldColumns(snapshotRows ?? [], "zh"), [snapshotRows]);
   const [page, setPage] = useState(1);
   const abortRef = useRef<AbortController | null>(null);
   const lock = useRef(false);
@@ -341,7 +341,7 @@ export default function Home() {
     const current = latest.current;
     if (!current.result?.rows.length || current.busy)
       throw new Error("Complete a query with matching results before exporting.");
-    const csv = toCsv(current.result.rows, language, customColumns),
+    const csv = toCsv(current.result.rows, "zh", customColumns),
       blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob),
       link = document.createElement("a");

@@ -2,6 +2,9 @@ FROM node:22.23.2-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm install --global npm@11.6.1 && npm ci
+RUN node -e "require.resolve('@rolldown/binding-linux-x64-gnu')" || npm install --no-save --no-package-lock @rolldown/binding-linux-x64-gnu@1.0.1
+RUN node -e "require.resolve('@tailwindcss/oxide-linux-x64-gnu')" || npm install --no-save --no-package-lock @tailwindcss/oxide-linux-x64-gnu@4.2.1
+RUN node -e "require.resolve('lightningcss-linux-x64-gnu')" || npm install --no-save --no-package-lock lightningcss-linux-x64-gnu@1.31.1
 COPY app ./app
 COPY components ./components
 COPY lib ./lib
