@@ -2,9 +2,25 @@ FROM node:22.23.2-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm install --global npm@11.6.1 && npm ci
-RUN node -e "require.resolve('@rolldown/binding-linux-x64-gnu')" || npm install --no-save --no-package-lock @rolldown/binding-linux-x64-gnu@1.0.1
-RUN node -e "require.resolve('@tailwindcss/oxide-linux-x64-gnu')" || npm install --no-save --no-package-lock @tailwindcss/oxide-linux-x64-gnu@4.2.1
-RUN node -e "require.resolve('lightningcss-linux-x64-gnu')" || npm install --no-save --no-package-lock lightningcss-linux-x64-gnu@1.31.1
+RUN for spec in \
+      "@rolldown/binding-linux-x64-gnu@1.0.1" \
+      "@tailwindcss/oxide-linux-x64-gnu@4.2.1" \
+      "lightningcss-linux-x64-gnu@1.31.1" \
+      "@esbuild/linux-x64@0.27.3"; do \
+      pkg="${spec%@*}"; \
+      node -e "require.resolve('$pkg')" 2>/dev/null || { \
+        mkdir -p "node_modules/$pkg" && \
+        tgz="$(npm pack --quiet "$spec")" && \
+        tar -xzf "$tgz" -C "node_modules/$pkg" --strip-components=1 && \
+        rm -f "$tgz"; \
+      }; \
+    done && \
+    node -e "require.resolve('lightningcss-linux-x64-gnu', { paths: ['/app/node_modules/vite'] })" 2>/dev/null || { \
+      mkdir -p "node_modules/vite/node_modules/lightningcss-linux-x64-gnu" && \
+      tgz="$(npm pack --quiet lightningcss-linux-x64-gnu@1.33.0)" && \
+      tar -xzf "$tgz" -C "node_modules/vite/node_modules/lightningcss-linux-x64-gnu" --strip-components=1 && \
+      rm -f "$tgz"; \
+    }
 COPY app ./app
 COPY components ./components
 COPY lib ./lib
