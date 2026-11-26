@@ -12,7 +12,12 @@ import {
   MachineNotFoundError,
   parseIsoDate,
 } from "../lib/hermes/incident-service.ts";
-import { runHermesAgentChat, testModelConnection } from "../lib/hermes/llm.ts";
+import {
+  buildAnthropicThinkingParams,
+  buildOpenAiThinkingParams,
+  runHermesAgentChat,
+  testModelConnection,
+} from "../lib/hermes/llm.ts";
 import { executeHermesTool, HERMES_TOOLS } from "../lib/hermes/tools.ts";
 
 function createMockSnapshotStore(seed = {}) {
@@ -36,7 +41,8 @@ function createMockSnapshotStore(seed = {}) {
           smartenance_account_key: values[5],
           temperature: values[6],
           max_tool_steps: values[7],
-          system_prompt: values[8],
+          think_level: values[8],
+          system_prompt: values[9],
         };
         return { rows: [] };
       }
@@ -380,6 +386,95 @@ test("Hermes config persists, masks API key, preserves saved key on blank update
   const cleared = await saveHermesConfig({ clearApiKey: true }, store);
   assert.equal(cleared.apiKey, "");
   assert.equal(toClientConfig(readHermesConfig ? cleared : cleared).configured, false);
+
+  // Partial thinkLevel toggle works even on a fresh unconfigured store:
+  const freshStore = createMockSnapshotStore();
+  const toggled = await saveHermesConfig({ thinkLevel: "high" }, freshStore);
+  assert.equal(toggled.thinkLevel, "high");
+  assert.equal(toClientConfig(toggled).thinkLevel, "high");
+  const backOff = await saveHermesConfig({ thinkLevel: "off" }, freshStore);
+  assert.equal(backOff.thinkLevel, "off");
+});
+
+test("thinkLevel maps provider-native NoThink / Low / Medium / High params and falls back on HTTP 400", async () => {
+  assert.deepEqual(
+    buildOpenAiThinkingParams("https://api.openai.com/v1", "gpt-5", "off"),
+    { reasoning_effort: "none" },
+  );
+  assert.deepEqual(
+    buildOpenAiThinkingParams("https://api.openai.com/v1", "gpt-5", "high"),
+    { reasoning_effort: "high" },
+  );
+  assert.deepEqual(
+    buildOpenAiThinkingParams("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen3-max", "off"),
+    { enable_thinking: false },
+  );
+  assert.deepEqual(
+    buildOpenAiThinkingParams("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen3-max", "medium"),
+    { enable_thinking: true, thinking_budget: 8192 },
+  );
+  assert.deepEqual(
+    buildOpenAiThinkingParams("https://api.deepseek.com/v1", "deepseek-chat", "off"),
+    { thinking: { type: "disabled" } },
+  );
+  assert.deepEqual(
+    buildOpenAiThinkingParams("https://api.deepseek.com/v1", "deepseek-chat", "low"),
+    { thinking: { type: "enabled" }, reasoning_effort: "low" },
+  );
+
+  const anthropicHigh = buildAnthropicThinkingParams("high", 0.2);
+  assert.deepEqual(anthropicHigh.thinking, { type: "enabled", budget_tokens: 16384 });
+  assert.equal(anthropicHigh.temperature, undefined);
+  assert.ok(anthropicHigh.max_tokens > 16384);
+
+  const anthropicOff = buildAnthropicThinkingParams("off", 0.2);
+  assert.equal(anthropicOff.thinking, undefined);
+  assert.equal(anthropicOff.temperature, 0.2);
+
+  // Automatic fallback when upstream rejects reasoning_effort:
+  const payloads = [];
+  const store = createMockSnapshotStore(sampleSeed());
+  const fallbackRes = await runHermesAgentChat({
+    language: "zh",
+    thinkLevel: "off",
+    messages: [{ role: "user", content: "你好" }],
+    config: {
+      provider: "custom",
+      apiFormat: "openai",
+      baseUrl: "https://example.com/v1",
+      apiKey: "sk-test-12345678",
+      model: "legacy-chat",
+      smartenanceAccountKey: "auto",
+      temperature: 0.2,
+      maxToolSteps: 4,
+      thinkLevel: "off",
+      systemPrompt: "",
+      source: "database",
+    },
+    runTool: (name, args) => executeHermesTool(name, args, { store }),
+    fetcher: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      payloads.push(body);
+      if (body.reasoning_effort !== undefined) {
+        return new Response(
+          JSON.stringify({ error: { message: "Unknown parameter: 'reasoning_effort'" } }),
+          { status: 400 },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          model: "legacy-chat",
+          choices: [{ message: { role: "assistant", content: "<think>hidden</think>你好！" } }],
+        }),
+        { status: 200 },
+      );
+    },
+  });
+  assert.equal(payloads.length, 2);
+  assert.equal(payloads[0].reasoning_effort, "none");
+  assert.equal(payloads[1].reasoning_effort, undefined);
+  assert.equal(fallbackRes.reply, "你好！");
+  assert.equal(fallbackRes.reasoning, undefined);
 });
 
 test("runHermesAgentChat executes multi-step tool calls for OpenAI and Anthropic formats", async () => {
@@ -398,6 +493,7 @@ test("runHermesAgentChat executes multi-step tool calls for OpenAI and Anthropic
       smartenanceAccountKey: "auto",
       temperature: 0.2,
       maxToolSteps: 4,
+      thinkLevel: "medium",
       systemPrompt: "",
       source: "database",
     },
@@ -464,6 +560,7 @@ test("runHermesAgentChat executes multi-step tool calls for OpenAI and Anthropic
       smartenanceAccountKey: "auto",
       temperature: 0.2,
       maxToolSteps: 4,
+      thinkLevel: "medium",
       systemPrompt: "",
       source: "database",
     },

@@ -1,7 +1,9 @@
 import {
+  normalizeThinkLevel,
   providerRequiresApiKey,
   validateBaseUrl,
   type HermesConfigServer,
+  type ThinkLevel,
 } from "./config.ts";
 import { HERMES_TOOLS, executeHermesTool, type HermesToolDefinition } from "./tools.ts";
 
@@ -21,9 +23,17 @@ export interface ChatTurnInput {
 
 export interface HermesChatResult {
   reply: string;
+  reasoning?: string;
   toolCalls: ToolCallTrace[];
   model: string;
+  thinkLevel: ThinkLevel;
 }
+
+const THINK_BUDGET_TOKENS: Record<Exclude<ThinkLevel, "off">, number> = {
+  low: 2048,
+  medium: 8192,
+  high: 16384,
+};
 
 function buildOpenAiChatUrl(baseUrl: string): string {
   const clean = validateBaseUrl(baseUrl);
@@ -38,7 +48,11 @@ function buildAnthropicMessagesUrl(baseUrl: string): string {
   return `${clean}/v1/messages`;
 }
 
-function buildSystemPrompt(language: "en" | "zh", extraPrompt: string): string {
+function buildSystemPrompt(
+  language: "en" | "zh",
+  extraPrompt: string,
+  thinkLevel: ThinkLevel,
+): string {
   const base =
     language === "zh"
       ? [
@@ -54,7 +68,90 @@ function buildSystemPrompt(language: "en" | "zh", extraPrompt: string): string {
           "Present concise, structured Markdown summaries highlighting key metrics, risks, and actionable maintenance recommendations.",
         ].join("\n");
 
-  return extraPrompt.trim() ? `${base}\n\nAdditional site instructions:\n${extraPrompt.trim()}` : base;
+  const thinkHint =
+    thinkLevel === "off"
+      ? language === "zh"
+        ? "直接给出简洁准确的最终答案，不要输出冗长的思考过程。"
+        : "Answer directly and concisely without verbose chain-of-thought reasoning."
+      : "";
+
+  return [
+    base,
+    thinkHint,
+    extraPrompt.trim() ? `Additional site instructions:\n${extraPrompt.trim()}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+export function buildOpenAiThinkingParams(
+  baseUrl: string,
+  model: string,
+  thinkLevel: ThinkLevel,
+): Record<string, unknown> {
+  const lowerUrl = baseUrl.toLowerCase();
+  const lowerModel = model.toLowerCase();
+
+  // Qwen3 / DashScope / QwQ: native enable_thinking + thinking_budget
+  if (lowerUrl.includes("dashscope") || /\b(qwen3|qwq)/i.test(lowerModel)) {
+    if (thinkLevel === "off") {
+      return { enable_thinking: false };
+    }
+    return {
+      enable_thinking: true,
+      thinking_budget: THINK_BUDGET_TOKENS[thinkLevel],
+    };
+  }
+
+  // DeepSeek V3.2+ / deepseek-reasoner: native thinking object + reasoning_effort
+  if (lowerUrl.includes("deepseek") || lowerModel.includes("deepseek")) {
+    if (thinkLevel === "off") {
+      return { thinking: { type: "disabled" } };
+    }
+    return {
+      thinking: { type: "enabled" },
+      reasoning_effort: thinkLevel,
+    };
+  }
+
+  // Standard OpenAI-compatible (OpenAI, Gemini, OpenRouter, Ollama, vLLM, SiliconFlow, Custom)
+  if (thinkLevel === "off") {
+    return { reasoning_effort: "none" };
+  }
+  return { reasoning_effort: thinkLevel };
+}
+
+export function buildAnthropicThinkingParams(
+  thinkLevel: ThinkLevel,
+  temperature: number,
+): { max_tokens: number; temperature?: number; thinking?: { type: "enabled"; budget_tokens: number } } {
+  if (thinkLevel === "off") {
+    return { max_tokens: 4096, temperature };
+  }
+  const budgetTokens = THINK_BUDGET_TOKENS[thinkLevel];
+  return {
+    max_tokens: Math.max(4096, budgetTokens + 4096),
+    thinking: { type: "enabled", budget_tokens: budgetTokens },
+  };
+}
+
+function isUnsupportedThinkingParamError(status: number, errorMessage: string): boolean {
+  if (status !== 400 && status !== 422) return false;
+  return /reasoning_effort|enable_thinking|thinking_budget|"thinking"|'thinking'|thinking\b|unrecognized|unknown (?:field|parameter)|extra_forbidden|not supported/i.test(
+    errorMessage,
+  );
+}
+
+function extractInlineThinkTags(content: string): { reply: string; inlineReasoning: string } {
+  const segments: string[] = [];
+  const cleaned = content
+    .replace(/<think>([\s\S]*?)<\/think>/gi, (_, inner: string) => {
+      const trimmed = inner.trim();
+      if (trimmed) segments.push(trimmed);
+      return "";
+    })
+    .trim();
+  return { reply: cleaned, inlineReasoning: segments.join("\n\n") };
 }
 
 function truncateToolPayloadForLlm(value: unknown, maxChars = 48_000): string {
@@ -146,12 +243,14 @@ export async function runHermesAgentChat(options: {
   messages: ChatTurnInput[];
   language: "en" | "zh";
   config: HermesConfigServer;
+  thinkLevel?: ThinkLevel;
   tools?: HermesToolDefinition[];
   runTool?: (tool: string, args: Record<string, unknown>) => Promise<unknown>;
   fetcher?: typeof fetch;
   signal?: AbortSignal;
 }): Promise<HermesChatResult> {
   const { config, language } = options;
+  const thinkLevel = normalizeThinkLevel(options.thinkLevel ?? config.thinkLevel, "off");
   const fetcher = options.fetcher ?? fetch;
   const tools = options.tools ?? HERMES_TOOLS;
   const runTool =
@@ -182,8 +281,9 @@ export async function runHermesAgentChat(options: {
     throw new Error("At least one user message is required.");
   }
 
-  const systemPrompt = buildSystemPrompt(language, config.systemPrompt);
+  const systemPrompt = buildSystemPrompt(language, config.systemPrompt, thinkLevel);
   const traces: ToolCallTrace[] = [];
+  const reasoningParts: string[] = [];
   const maxSteps = Math.min(16, Math.max(1, config.maxToolSteps || 8));
 
   const invokeToolWithTrace = async (
@@ -258,22 +358,44 @@ export async function runHermesAgentChat(options: {
       (m) => ({ role: m.role, content: m.content }),
     );
     let resolvedModel = config.model;
+    let useThinkingParams = thinkLevel !== "off";
 
     for (let step = 0; step <= maxSteps; step++) {
       const allowTools = step < maxSteps;
-      const res = await fetcher(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
+      const buildBody = (withThinking: boolean) => {
+        const thinkingOpts = buildAnthropicThinkingParams(
+          withThinking ? thinkLevel : "off",
+          config.temperature,
+        );
+        return {
           model: config.model,
-          max_tokens: 4096,
-          temperature: config.temperature,
+          ...thinkingOpts,
           system: systemPrompt,
           messages: convo,
           ...(allowTools ? { tools: anthropicTools } : {}),
-        }),
+        };
+      };
+
+      let res = await fetcher(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(buildBody(useThinkingParams)),
         signal: options.signal ?? AbortSignal.timeout(90_000),
       });
+      if (!res.ok && useThinkingParams) {
+        const errMsg = await parseErrorMessage(res);
+        if (isUnsupportedThinkingParamError(res.status, errMsg)) {
+          useThinkingParams = false;
+          res = await fetcher(url, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(buildBody(false)),
+            signal: options.signal ?? AbortSignal.timeout(90_000),
+          });
+        } else {
+          throw new Error(errMsg);
+        }
+      }
       if (!res.ok) throw new Error(await parseErrorMessage(res));
 
       const data = (await res.json()) as {
@@ -282,6 +404,7 @@ export async function runHermesAgentChat(options: {
         content?: Array<{
           type: string;
           text?: string;
+          thinking?: string;
           id?: string;
           name?: string;
           input?: unknown;
@@ -289,6 +412,11 @@ export async function runHermesAgentChat(options: {
       };
       if (data.model) resolvedModel = data.model;
       const blocks = Array.isArray(data.content) ? data.content : [];
+      for (const b of blocks) {
+        if (b.type === "thinking" && typeof b.thinking === "string" && b.thinking.trim()) {
+          reasoningParts.push(b.thinking.trim());
+        }
+      }
       const toolUses = blocks.filter((b) => b.type === "tool_use" && b.id && b.name);
 
       if (!allowTools || toolUses.length === 0) {
@@ -297,7 +425,14 @@ export async function runHermesAgentChat(options: {
           .map((b) => b.text)
           .join("\n")
           .trim();
-        return { reply, toolCalls: traces, model: resolvedModel };
+        const reasoning = thinkLevel !== "off" ? reasoningParts.join("\n\n").trim() : "";
+        return {
+          reply,
+          ...(reasoning ? { reasoning } : {}),
+          toolCalls: traces,
+          model: resolvedModel,
+          thinkLevel,
+        };
       }
 
       convo.push({ role: "assistant", content: blocks });
@@ -314,7 +449,7 @@ export async function runHermesAgentChat(options: {
       convo.push({ role: "user", content: toolResults });
     }
 
-    return { reply: "", toolCalls: traces, model: resolvedModel };
+    return { reply: "", toolCalls: traces, model: resolvedModel, thinkLevel };
   }
 
   // OpenAI-compatible (/chat/completions)
@@ -336,20 +471,38 @@ export async function runHermesAgentChat(options: {
     ...sanitizedHistory.map((m) => ({ role: m.role, content: m.content })),
   ];
   let resolvedModel = config.model;
+  let thinkingParams = buildOpenAiThinkingParams(config.baseUrl, config.model, thinkLevel);
 
   for (let step = 0; step <= maxSteps; step++) {
     const allowTools = step < maxSteps;
-    const res = await fetcher(url, {
+    const buildBody = (extraThinking: Record<string, unknown>) => ({
+      model: config.model,
+      temperature: config.temperature,
+      messages: convo,
+      ...extraThinking,
+      ...(allowTools ? { tools: openAiTools, tool_choice: "auto" } : {}),
+    });
+
+    let res = await fetcher(url, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        model: config.model,
-        temperature: config.temperature,
-        messages: convo,
-        ...(allowTools ? { tools: openAiTools, tool_choice: "auto" } : {}),
-      }),
+      body: JSON.stringify(buildBody(thinkingParams)),
       signal: options.signal ?? AbortSignal.timeout(90_000),
     });
+    if (!res.ok && Object.keys(thinkingParams).length > 0) {
+      const errMsg = await parseErrorMessage(res);
+      if (isUnsupportedThinkingParamError(res.status, errMsg)) {
+        thinkingParams = {};
+        res = await fetcher(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(buildBody({})),
+          signal: options.signal ?? AbortSignal.timeout(90_000),
+        });
+      } else {
+        throw new Error(errMsg);
+      }
+    }
     if (!res.ok) throw new Error(await parseErrorMessage(res));
 
     const data = (await res.json()) as {
@@ -359,6 +512,7 @@ export async function runHermesAgentChat(options: {
           role?: string;
           content?: string | null;
           reasoning_content?: string | null;
+          reasoning?: string | null;
           tool_calls?: Array<{
             id: string;
             type?: string;
@@ -371,12 +525,26 @@ export async function runHermesAgentChat(options: {
     const msg = data.choices?.[0]?.message;
     if (!msg) throw new Error("Upstream LLM returned an empty choices response.");
 
+    const rawReasoning =
+      typeof msg.reasoning_content === "string"
+        ? msg.reasoning_content.trim()
+        : typeof msg.reasoning === "string"
+          ? msg.reasoning.trim()
+          : "";
+    if (rawReasoning) reasoningParts.push(rawReasoning);
+
     const toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
     if (!allowTools || toolCalls.length === 0) {
+      const rawContent = typeof msg.content === "string" ? msg.content.trim() : "";
+      const { reply, inlineReasoning } = extractInlineThinkTags(rawContent);
+      if (inlineReasoning) reasoningParts.push(inlineReasoning);
+      const reasoning = thinkLevel !== "off" ? reasoningParts.join("\n\n").trim() : "";
       return {
-        reply: typeof msg.content === "string" ? msg.content.trim() : "",
+        reply,
+        ...(reasoning ? { reasoning } : {}),
         toolCalls: traces,
         model: resolvedModel,
+        thinkLevel,
       };
     }
 
@@ -401,5 +569,5 @@ export async function runHermesAgentChat(options: {
     }
   }
 
-  return { reply: "", toolCalls: traces, model: resolvedModel };
+  return { reply: "", toolCalls: traces, model: resolvedModel, thinkLevel };
 }

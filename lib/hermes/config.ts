@@ -3,6 +3,20 @@ import { resolve } from "node:path";
 import { getIncidentStore } from "../festo/database.ts";
 import { listSmartenanceAccounts, type SnapshotStore, type SmartenanceAccountInfo } from "./incident-service.ts";
 
+export type ThinkLevel = "off" | "low" | "medium" | "high";
+
+export const THINK_LEVELS: readonly ThinkLevel[] = ["off", "low", "medium", "high"] as const;
+
+export function normalizeThinkLevel(value: unknown, fallback: ThinkLevel = "off"): ThinkLevel {
+  if (typeof value !== "string") return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "off" || normalized === "none" || normalized === "nothink") return "off";
+  if (normalized === "low" || normalized === "medium" || normalized === "high") {
+    return normalized;
+  }
+  return fallback;
+}
+
 export interface ProviderPreset {
   id: string;
   label: string;
@@ -21,6 +35,7 @@ export interface HermesConfigServer {
   smartenanceAccountKey: string;
   temperature: number;
   maxToolSteps: number;
+  thinkLevel: ThinkLevel;
   systemPrompt: string;
   source: "database" | "env";
 }
@@ -33,6 +48,7 @@ export interface HermesConfigClient {
   smartenanceAccountKey: string;
   temperature: number;
   maxToolSteps: number;
+  thinkLevel: ThinkLevel;
   systemPrompt: string;
   hasApiKey: boolean;
   apiKeyMasked: string;
@@ -57,6 +73,7 @@ export interface HermesConfigPatch {
   smartenanceAccountKey?: string;
   temperature?: number;
   maxToolSteps?: number;
+  thinkLevel?: ThinkLevel;
   systemPrompt?: string;
 }
 
@@ -156,6 +173,7 @@ export function toClientConfig(server: HermesConfigServer): HermesConfigClient {
     smartenanceAccountKey: server.smartenanceAccountKey || "auto",
     temperature: server.temperature,
     maxToolSteps: server.maxToolSteps,
+    thinkLevel: normalizeThinkLevel(server.thinkLevel),
     systemPrompt: server.systemPrompt,
     hasApiKey,
     apiKeyMasked: maskApiKey(server.apiKey),
@@ -182,6 +200,7 @@ export function envDefaultHermesConfig(
     smartenanceAccountKey: (env.SMARTENANCE_ACCOUNT_KEY ?? "auto").trim() || "auto",
     temperature: Number.isFinite(temp) ? Math.min(2, Math.max(0, temp)) : 0.2,
     maxToolSteps: Number.isFinite(steps) ? Math.min(16, Math.max(1, Math.trunc(steps))) : 8,
+    thinkLevel: normalizeThinkLevel(env.HERMES_THINK_LEVEL, "off"),
     systemPrompt: (env.HERMES_SYSTEM_PROMPT ?? "").trim(),
     source: "env",
   };
@@ -203,6 +222,7 @@ export async function readHermesConfig(store?: SnapshotStore): Promise<HermesCon
       smartenance_account_key: string;
       temperature: number;
       max_tool_steps: number;
+      think_level?: string;
       system_prompt: string;
     }>(`SELECT * FROM hermes_agent_config WHERE id = 1`);
     const row = res.rows[0];
@@ -210,14 +230,15 @@ export async function readHermesConfig(store?: SnapshotStore): Promise<HermesCon
     return {
       provider: row.provider || fallback.provider,
       apiFormat: row.api_format === "anthropic" ? "anthropic" : "openai",
-      baseUrl: row.base_url || fallback.baseUrl,
+      baseUrl: row.base_url ?? fallback.baseUrl,
       apiKey: row.api_key ?? "",
-      model: row.model || fallback.model,
+      model: row.model ?? fallback.model,
       smartenanceAccountKey: row.smartenance_account_key || "auto",
       temperature: Number.isFinite(Number(row.temperature)) ? Number(row.temperature) : 0.2,
       maxToolSteps: Number.isFinite(Number(row.max_tool_steps))
         ? Math.min(16, Math.max(1, Math.trunc(Number(row.max_tool_steps))))
         : 8,
+      thinkLevel: normalizeThinkLevel(row.think_level, fallback.thinkLevel),
       systemPrompt: row.system_prompt ?? "",
       source: "database",
     };
@@ -248,6 +269,13 @@ export async function saveHermesConfig(
   const db: SnapshotStore = store ?? getIncidentStore();
   const current = await readHermesConfig(db);
 
+  const isPartialControlPatch =
+    patch.baseUrl === undefined &&
+    patch.model === undefined &&
+    patch.apiKey === undefined &&
+    patch.provider === undefined &&
+    patch.apiFormat === undefined;
+
   const provider =
     patch.provider !== undefined ? patch.provider.trim() || current.provider : current.provider;
   const apiFormat =
@@ -257,9 +285,13 @@ export async function saveHermesConfig(
         : "openai"
       : current.apiFormat;
   const baseUrl =
-    patch.baseUrl !== undefined ? validateBaseUrl(patch.baseUrl) : validateBaseUrl(current.baseUrl);
+    patch.baseUrl !== undefined
+      ? validateBaseUrl(patch.baseUrl)
+      : isPartialControlPatch && !current.baseUrl.trim()
+        ? ""
+        : validateBaseUrl(current.baseUrl);
   const model = patch.model !== undefined ? patch.model.trim() : current.model.trim();
-  if (!model) throw new Error("Model name is required.");
+  if (!isPartialControlPatch && !model) throw new Error("Model name is required.");
 
   const apiKey = patch.clearApiKey
     ? ""
@@ -285,15 +317,20 @@ export async function saveHermesConfig(
     throw new Error("Max tool steps must be between 1 and 16.");
   }
 
+  const thinkLevel =
+    patch.thinkLevel !== undefined
+      ? normalizeThinkLevel(patch.thinkLevel, current.thinkLevel)
+      : current.thinkLevel;
+
   const systemPrompt =
     patch.systemPrompt !== undefined ? String(patch.systemPrompt).trim() : current.systemPrompt;
 
   await db.query(
     `INSERT INTO hermes_agent_config (
        id, provider, api_format, base_url, api_key, model,
-       smartenance_account_key, temperature, max_tool_steps, system_prompt, updated_at
+       smartenance_account_key, temperature, max_tool_steps, think_level, system_prompt, updated_at
      )
-     VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp())
+     VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, clock_timestamp())
      ON CONFLICT (id) DO UPDATE SET
        provider = EXCLUDED.provider,
        api_format = EXCLUDED.api_format,
@@ -303,6 +340,7 @@ export async function saveHermesConfig(
        smartenance_account_key = EXCLUDED.smartenance_account_key,
        temperature = EXCLUDED.temperature,
        max_tool_steps = EXCLUDED.max_tool_steps,
+       think_level = EXCLUDED.think_level,
        system_prompt = EXCLUDED.system_prompt,
        updated_at = clock_timestamp()`,
     [
@@ -314,6 +352,7 @@ export async function saveHermesConfig(
       smartenanceAccountKey,
       temperature,
       maxToolSteps,
+      thinkLevel,
       systemPrompt,
     ],
   );

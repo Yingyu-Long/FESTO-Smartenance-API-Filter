@@ -807,6 +807,163 @@ footer a {
   gap: 8px;
 }
 
+.hermes-think-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 42px;
+  padding: 0 7px;
+  border-radius: 12px;
+  border: 1px solid #d5e0ea;
+  background: #f9fbfd;
+  flex-shrink: 0;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.hermes-think-control.is-on {
+  border-color: #b7d7f0;
+  background: #f2f8fe;
+}
+
+.hermes-think-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 5px;
+  border: 0;
+  background: transparent;
+  color: #6a8094;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: color 150ms ease;
+}
+
+.hermes-think-control.is-on .hermes-think-switch {
+  color: #0076bd;
+}
+
+.hermes-think-switch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.hermes-switch-track {
+  position: relative;
+  width: 30px;
+  height: 17px;
+  border-radius: 999px;
+  background: #cbd7e3;
+  transition: background 160ms ease;
+  display: inline-block;
+}
+
+.hermes-think-control.is-on .hermes-switch-track {
+  background: #0076bd;
+}
+
+.hermes-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgb(15 38 64 / 22%);
+  transition: transform 160ms ease;
+}
+
+.hermes-think-control.is-on .hermes-switch-thumb {
+  transform: translateX(13px);
+}
+
+.hermes-think-dropdown {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding-left: 5px;
+  border-left: 1px solid #d5e6f5;
+}
+
+.hermes-think-dropdown-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #0069aa;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+
+.hermes-think-dropdown-trigger:hover:not(:disabled) {
+  background: #dfeffc;
+}
+
+.hermes-think-dropdown-trigger svg {
+  transition: transform 150ms ease;
+}
+
+.hermes-think-dropdown-trigger svg.is-rotated {
+  transform: rotate(180deg);
+}
+
+.hermes-think-dropdown-trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.hermes-think-dropdown-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  min-width: 104px;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid #dce6f0;
+  background: #ffffff;
+  box-shadow: 0 10px 26px rgb(15 38 64 / 12%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 20;
+}
+
+.hermes-think-dropdown-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #213c57;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.hermes-think-dropdown-item:hover {
+  background: #f1f7fd;
+  color: #0069aa;
+}
+
+.hermes-think-dropdown-item.is-active {
+  background: #eaf4fc;
+  color: #0076bd;
+}
+
 .hermes-icon-btn {
   width: 36px;
   height: 36px;
@@ -1062,6 +1219,19 @@ footer a {
 .hermes-trace-icon {
   color: #5b758c;
   flex-shrink: 0;
+}
+
+.hermes-trace-icon.is-brain {
+  color: #0076bd;
+}
+
+.hermes-reasoning-text {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #4c6277;
+  white-space: pre-wrap;
+  max-height: 240px;
+  overflow: auto;
 }
 
 .hermes-trace-name {

@@ -60,6 +60,10 @@ CREATE TABLE IF NOT EXISTS hermes_agent_config (
   smartenance_account_key text NOT NULL DEFAULT 'auto',
   temperature double precision NOT NULL DEFAULT 0.2,
   max_tool_steps integer NOT NULL DEFAULT 8,
+  think_level text NOT NULL DEFAULT 'off' CHECK (think_level IN ('off', 'low', 'medium', 'high')),
   system_prompt text NOT NULL DEFAULT '',
   updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
+
+ALTER TABLE hermes_agent_config
+  ADD COLUMN IF NOT EXISTS think_level text NOT NULL DEFAULT 'off';

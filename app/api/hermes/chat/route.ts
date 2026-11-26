@@ -1,6 +1,6 @@
 import { FestoError } from "@/lib/festo/client";
 import { NO_STORE, readBody } from "@/lib/festo/http";
-import { readHermesConfig } from "@/lib/hermes/config";
+import { normalizeThinkLevel, readHermesConfig } from "@/lib/hermes/config";
 import { runHermesAgentChat, type ChatTurnInput } from "@/lib/hermes/llm";
 
 export async function POST(request: Request) {
@@ -8,6 +8,7 @@ export async function POST(request: Request) {
     const body = (await readBody(request)) as {
       language?: unknown;
       messages?: unknown;
+      thinkLevel?: unknown;
     };
     if (!body || !Array.isArray(body.messages)) {
       return Response.json(
@@ -17,10 +18,15 @@ export async function POST(request: Request) {
     }
     const language = body.language === "zh" ? "zh" : "en";
     const config = await readHermesConfig();
+    const thinkLevel =
+      body.thinkLevel !== undefined
+        ? normalizeThinkLevel(body.thinkLevel, config.thinkLevel)
+        : config.thinkLevel;
     const outcome = await runHermesAgentChat({
       language,
       messages: body.messages as ChatTurnInput[],
       config,
+      thinkLevel,
       signal: request.signal,
     });
     return Response.json(outcome, { headers: NO_STORE });

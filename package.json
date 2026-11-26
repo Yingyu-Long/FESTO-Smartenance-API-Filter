@@ -6,7 +6,8 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "node --env-file-if-exists=.env node_modules/vinext/dist/cli.js dev",
+    "dev": "npm run db:local && node --env-file-if-exists=.env node_modules/vinext/dist/cli.js dev",
+    "dev:web": "node --env-file-if-exists=.env node_modules/vinext/dist/cli.js dev",
     "build": "vinext build",
     "start": "node --env-file-if-exists=.env node_modules/vinext/dist/cli.js start -H 127.0.0.1 -p 3000",
     "start:server": "node --env-file-if-exists=.env node_modules/vinext/dist/cli.js start -H 0.0.0.0 -p 3000",

@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   ArrowUp,
   Bot,
+  Brain,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -23,6 +24,8 @@ import {
 } from "lucide-react";
 
 export type HermesView = "chat" | "settings";
+export type ThinkLevel = "off" | "low" | "medium" | "high";
+type ActiveThinkLevel = Exclude<ThinkLevel, "off">;
 
 const FESTO_ART = [
   "███████╗███████╗███████╗████████╗ ██████╗ ",
@@ -49,6 +52,7 @@ interface HermesConfigClient {
   smartenanceAccountKey: string;
   temperature: number;
   maxToolSteps: number;
+  thinkLevel: ThinkLevel;
   systemPrompt: string;
   hasApiKey: boolean;
   apiKeyMasked: string;
@@ -76,6 +80,7 @@ interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  reasoning?: string;
   toolCalls?: ToolCallTrace[];
   error?: boolean;
   createdAt: string;
@@ -211,6 +216,31 @@ function ToolTraceCard({ trace, zh }: { trace: ToolCallTrace; zh: boolean }) {
   );
 }
 
+function ReasoningCard({ reasoning, zh }: { reasoning: string; zh: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="hermes-trace-item is-reasoning">
+      <button
+        type="button"
+        className="hermes-trace-header"
+        onClick={() => setExpanded((prev) => !prev)}
+      >
+        <span className="hermes-trace-chevron">
+          {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        </span>
+        <Brain size={12} className="hermes-trace-icon is-brain" />
+        <span className="hermes-trace-name">{zh ? "思考过程" : "Thinking"}</span>
+      </button>
+      {expanded && (
+        <div className="hermes-trace-body">
+          <div className="hermes-reasoning-text">{reasoning}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function HermesAgentModule({
   language,
   activeView,
@@ -227,6 +257,10 @@ export default function HermesAgentModule({
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKeyDraft, setApiKeyDraft] = useState("");
   const [model, setModel] = useState("");
+  const [thinkLevel, setThinkLevel] = useState<ThinkLevel>("off");
+  const [lastActiveThinkLevel, setLastActiveThinkLevel] = useState<ActiveThinkLevel>("medium");
+  const [thinkMenuOpen, setThinkMenuOpen] = useState(false);
+  const thinkMenuRef = useRef<HTMLDivElement | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
   const [testingSettings, setTestingSettings] = useState(false);
   const [settingsNotice, setSettingsNotice] = useState<{
@@ -255,6 +289,9 @@ export default function HermesAgentModule({
         setApiFormat(data.config.apiFormat);
         setBaseUrl(data.config.baseUrl ?? "");
         setModel(data.config.model ?? "");
+        const loadedThink = data.config.thinkLevel ?? "off";
+        setThinkLevel(loadedThink);
+        if (loadedThink !== "off") setLastActiveThinkLevel(loadedThink);
       }
       if (toolsRes.ok) {
         const data = (await toolsRes.json()) as { tools: HermesToolDefinition[] };
@@ -273,6 +310,50 @@ export default function HermesAgentModule({
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, sending]);
 
+  useEffect(() => {
+    if (!thinkMenuOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (thinkMenuRef.current && !thinkMenuRef.current.contains(event.target as Node)) {
+        setThinkMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setThinkMenuOpen(false);
+    };
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [thinkMenuOpen]);
+
+  async function persistThinkLevel(nextLevel: ThinkLevel) {
+    setThinkLevel(nextLevel);
+    setThinkMenuOpen(false);
+    if (nextLevel !== "off") {
+      setLastActiveThinkLevel(nextLevel);
+    }
+    try {
+      const res = await fetch("/api/hermes/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ thinkLevel: nextLevel }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { config?: HermesConfigClient };
+        if (data.config) setConfig(data.config);
+      }
+    } catch {
+      // Still applied immediately in local state & sent per chat request.
+    }
+  }
+
+  function handleToggleThink() {
+    const nextLevel: ThinkLevel = thinkLevel === "off" ? lastActiveThinkLevel : "off";
+    void persistThinkLevel(nextLevel);
+  }
+
   async function handleSaveSettings(event: React.FormEvent) {
     event.preventDefault();
     setSavingSettings(true);
@@ -287,6 +368,7 @@ export default function HermesAgentModule({
           baseUrl,
           ...(apiKeyDraft.trim() ? { apiKey: apiKeyDraft.trim() } : {}),
           model,
+          thinkLevel,
         }),
       });
       const data = (await res.json()) as {
@@ -404,11 +486,13 @@ export default function HermesAgentModule({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           language,
+          thinkLevel,
           messages: nextHistory.map((m) => ({ role: m.role, content: m.content })),
         }),
       });
       const data = (await res.json()) as {
         reply?: string;
+        reasoning?: string;
         toolCalls?: ToolCallTrace[];
         error?: string;
       };
@@ -423,6 +507,7 @@ export default function HermesAgentModule({
           id: `assistant-${Date.now()}`,
           role: "assistant",
           content: data.reply || "—",
+          reasoning: data.reasoning,
           toolCalls: data.toolCalls ?? [],
           createdAt: new Date().toISOString(),
         },
@@ -560,6 +645,11 @@ export default function HermesAgentModule({
                           </span>
                         </div>
                       )}
+                      {msg.reasoning && (
+                        <div className="hermes-trace-list">
+                          <ReasoningCard reasoning={msg.reasoning} zh={zh} />
+                        </div>
+                      )}
                       {msg.toolCalls && msg.toolCalls.length > 0 && (
                         <div className="hermes-trace-list">
                           {msg.toolCalls.map((trace, idx) => (
@@ -607,6 +697,89 @@ export default function HermesAgentModule({
                 }}
                 disabled={sending}
               />
+              <div
+                ref={thinkMenuRef}
+                className={`hermes-think-control ${thinkLevel !== "off" ? "is-on" : ""}`}
+              >
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={thinkLevel !== "off"}
+                  className="hermes-think-switch"
+                  onClick={handleToggleThink}
+                  disabled={sending}
+                  title={
+                    thinkLevel === "off"
+                      ? zh
+                        ? "NoThink（关闭思考）"
+                        : "NoThink (Off)"
+                      : zh
+                        ? "思考已开启"
+                        : "Thinking On"
+                  }
+                  aria-label={zh ? "思考模式开关" : "Toggle thinking mode"}
+                >
+                  <Brain size={15} />
+                  <span className="hermes-switch-track" aria-hidden="true">
+                    <span className="hermes-switch-thumb" />
+                  </span>
+                </button>
+                {thinkLevel !== "off" && (
+                  <div className="hermes-think-dropdown">
+                    <button
+                      type="button"
+                      className="hermes-think-dropdown-trigger"
+                      aria-haspopup="listbox"
+                      aria-expanded={thinkMenuOpen}
+                      disabled={sending}
+                      onClick={() => setThinkMenuOpen((open) => !open)}
+                      title={zh ? "调节思考强度" : "Think level"}
+                    >
+                      <span>
+                        {thinkLevel === "low"
+                          ? zh
+                            ? "低"
+                            : "Low"
+                          : thinkLevel === "high"
+                            ? zh
+                              ? "高"
+                              : "High"
+                            : zh
+                              ? "中"
+                              : "Med"}
+                      </span>
+                      <ChevronDown size={13} className={thinkMenuOpen ? "is-rotated" : ""} />
+                    </button>
+                    {thinkMenuOpen && (
+                      <div
+                        className="hermes-think-dropdown-menu"
+                        role="listbox"
+                        aria-label={zh ? "思考强度" : "Think level"}
+                      >
+                        {(
+                          [
+                            ["low", zh ? "低" : "Low"],
+                            ["medium", zh ? "中" : "Medium"],
+                            ["high", zh ? "高" : "High"],
+                          ] as const
+                        ).map(([level, label]) => (
+                          <button
+                            key={level}
+                            type="button"
+                            role="option"
+                            aria-selected={thinkLevel === level}
+                            className={`hermes-think-dropdown-item ${thinkLevel === level ? "is-active" : ""}`}
+                            onClick={() => void persistThinkLevel(level)}
+                          >
+                            <span>{label}</span>
+                            {thinkLevel === level && <Check size={13} />}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
               <button
                 type="submit"
                 className="hermes-send-btn"
