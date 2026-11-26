@@ -338,13 +338,53 @@ export class PostgresIncidentStore implements IncidentStore {
       return result.rows[0]?.finished_at ? result.rows[0].finished_at.toISOString() : null;
     } catch { throw databaseError(); }
   }
+  async query<R extends pg.QueryResultRow = pg.QueryResultRow>(
+    text: string,
+    values?: unknown[],
+  ): Promise<pg.QueryResult<R>> {
+    await this.initialize();
+    try {
+      return await this.pool.query<R>(text, values);
+    } catch {
+      throw databaseError();
+    }
+  }
+  async withReadOnlySnapshot<T>(run: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+    await this.initialize();
+    const client = await this.pool.connect().catch(() => {
+      throw databaseError();
+    });
+    try {
+      await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const value = await run(client);
+      await client.query("COMMIT");
+      return value;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
   async close() { await this.pool.end(); }
 }
 
-// Reuse the pool across Vite development reloads, as well as production requests.
+// Reuse the pool across requests, but replace stale instances if Vite HMR reloads this class.
 const shared = globalThis as typeof globalThis & { festoPostgres?: PostgresIncidentStore };
 export function getIncidentStore(): PostgresIncidentStore {
   if (!process.env.DATABASE_URL)
     throw new FestoError("Configure DATABASE_URL to enable the PostgreSQL database.", 503);
-  return shared.festoPostgres ??= new PostgresIncidentStore(process.env.DATABASE_URL);
+  const existing = shared.festoPostgres;
+  if (
+    existing &&
+    existing instanceof PostgresIncidentStore &&
+    typeof existing.query === "function" &&
+    typeof existing.withReadOnlySnapshot === "function"
+  ) {
+    return existing;
+  }
+  void existing?.close().catch(() => {});
+  const fresh = new PostgresIncidentStore(process.env.DATABASE_URL);
+  shared.festoPostgres = fresh;
+  return fresh;
 }

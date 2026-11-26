@@ -22,12 +22,17 @@ declare global {
 declare namespace VinextRouteTypes {
   type PageRoute = "/";
   type LayoutRoute = "/";
-  type RouteHandlerRoute = "/api/connect" | "/api/repairs" | "/api/sync" | "/api/sync/status";
-  type AppRoute = "/" | "/api/connect" | "/api/repairs" | "/api/sync" | "/api/sync/status";
+  type RouteHandlerRoute = "/api/connect" | "/api/hermes/chat" | "/api/hermes/config" | "/api/hermes/config/test" | "/api/hermes/tool" | "/api/hermes/tools" | "/api/repairs" | "/api/sync" | "/api/sync/status";
+  type AppRoute = "/" | "/api/connect" | "/api/hermes/chat" | "/api/hermes/config" | "/api/hermes/config/test" | "/api/hermes/tool" | "/api/hermes/tools" | "/api/repairs" | "/api/sync" | "/api/sync/status";
 
   interface ParamMap {
     "/": {};
     "/api/connect": {};
+    "/api/hermes/chat": {};
+    "/api/hermes/config": {};
+    "/api/hermes/config/test": {};
+    "/api/hermes/tool": {};
+    "/api/hermes/tools": {};
     "/api/repairs": {};
     "/api/sync": {};
     "/api/sync/status": {};

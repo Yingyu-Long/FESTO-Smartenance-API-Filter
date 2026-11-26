@@ -4,6 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import pg from 'pg';
 import { PostgresIncidentStore } from '../lib/festo/database.ts';
+import { IncidentService, listSmartenanceAccounts } from '../lib/hermes/incident-service.ts';
 
 const connectionString = process.env.DATABASE_URL;
 // Only synthetic, randomly scoped records are created/removed. Real cached
@@ -134,6 +135,41 @@ await test('real PostgreSQL persistence, isolation, rollback, concurrency and co
       } finally {
         await secondStore.close();
       }
+    });
+    await t.test('IncidentService queries repeatable-read PostgreSQL snapshots accurately', async () => {
+      const incidentWithHours = {
+        ...row,
+        state: 'Open',
+        occurredAt: '2026-10-15T02:00:00Z',
+        repairTasks: [
+          {
+            id: randomUUID(),
+            createdAt: '2026-10-15T04:00:00Z',
+            description: '更换气缸密封件',
+            customFields: [
+              { label: '维修工时', value: 4 },
+              { label: '维修负责人', value: '张三' },
+              { label: '协作人员', value: ['李四'] },
+            ],
+          },
+        ],
+      };
+      await store.replace(scopes[0], machine, [incidentWithHours], await store.revision());
+      const accounts = await listSmartenanceAccounts(store);
+      assert.ok(accounts.some((a) => a.account_key === scopes[0] && a.machine_count === 1));
+
+      const svc = new IncidentService(store, scopes[0]);
+      const overview = await svc.getFactoryOverview(5);
+      assert.equal(overview.machine_count, 1);
+      assert.equal(overview.active_incident_count, 1);
+      assert.equal(overview.snapshot_complete, true);
+
+      const hours = await svc.getEmployeeWorkHours('2026-10');
+      assert.equal(hours.total_work_hours, 4);
+      assert.deepEqual(hours.employees, [
+        { employee: '张三', work_hours: 2, repair_task_count: 1 },
+        { employee: '李四', work_hours: 2, repair_task_count: 1 },
+      ]);
     });
   } finally {
     if (createdRunIds.length) {

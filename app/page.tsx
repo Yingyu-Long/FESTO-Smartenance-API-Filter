@@ -3,6 +3,7 @@ import Image from "next/image";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownToLine,
+  Bot,
   Cable,
   CalendarDays,
   Factory,
@@ -14,6 +15,7 @@ import {
   Wrench,
   X,
 } from "lucide-react";
+import HermesAgentModule, { type HermesView } from "@/components/hermes/HermesAgentModule";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
@@ -57,12 +59,19 @@ type Result = RepairResult;
 const firstPolicy = "b2c_1_apisignin_ropc";
 export default function Home() {
   const [language, setLanguage] = useState<Language>("en");
+  const [activeModule, setActiveModule] = useState<"export" | "hermes">("export");
+  const [hermesView, setHermesView] = useState<HermesView>("chat");
+  const zh = language === "zh";
   const t = (text: string) => translate(text, language);
   useEffect(() => {
     try {
       const saved = localStorage.getItem("festo-language");
       if (saved === "en" || saved === "zh") setLanguage(saved);
     } catch {}
+    const requested = new URLSearchParams(window.location.search).get("project");
+    if (requested === "hermes" || requested === "debug") {
+      setActiveModule("hermes");
+    }
   }, []);
   useEffect(() => {
     document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
@@ -457,7 +466,22 @@ export default function Home() {
   return (
     <main className="workspace">
       <header className="topbar">
-        <div className="brand">
+        <div
+          className={`brand ${activeModule === "hermes" ? "is-clickable" : ""}`}
+          onClick={activeModule === "hermes" ? () => setActiveModule("export") : undefined}
+          role={activeModule === "hermes" ? "button" : undefined}
+          tabIndex={activeModule === "hermes" ? 0 : undefined}
+          onKeyDown={
+            activeModule === "hermes"
+              ? (e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setActiveModule("export");
+                  }
+                }
+              : undefined
+          }
+        >
           <Image
             unoptimized
             src="/brand-icon.png"
@@ -470,6 +494,7 @@ export default function Home() {
             SMARTENANCE<span className="brand-sub">{t("Repair data export")}</span>
           </span>
         </div>
+
         <div className="header-settings">
           <label className="language-setting">
             <select
@@ -481,17 +506,20 @@ export default function Home() {
               <option value="zh">中文</option>
             </select>
           </label>
-          <Image
-            unoptimized
-            src="/festo-logo.png"
-            alt="FESTO"
-            width={264}
-            height={70}
-            className="festo-logo"
-          />
+          <button
+            type="button"
+            className={`unified-agent-trigger ${activeModule === "hermes" ? "is-active" : ""}`}
+            aria-pressed={activeModule === "hermes"}
+            onClick={() =>
+              setActiveModule((current) => (current === "hermes" ? "export" : "hermes"))
+            }
+          >
+            <Bot size={16} />
+            <span>Agent</span>
+          </button>
         </div>
       </header>
-      <div className="content">
+      <div className="content" hidden={activeModule !== "export"}>
         <div className="page-heading">
           <div>
             <p className="eyebrow">{t("REPAIR TASKS / CSV")}</p>
@@ -984,6 +1012,17 @@ export default function Home() {
           </a>
         </footer>
       </div>
+      <section
+        id="project-hermes"
+        aria-label={zh ? "Agent 智能助手" : "Agent"}
+        hidden={activeModule !== "hermes"}
+      >
+        <HermesAgentModule
+          language={language}
+          activeView={hermesView}
+          onViewChange={setHermesView}
+        />
+      </section>
     </main>
   );
 }

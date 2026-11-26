@@ -49,3 +49,17 @@ CREATE TABLE IF NOT EXISTS smartenance_sync_runs (
 
 CREATE INDEX IF NOT EXISTS smartenance_sync_runs_source_started_at
   ON smartenance_sync_runs (trigger_source, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS hermes_agent_config (
+  id integer PRIMARY KEY CHECK (id = 1),
+  provider text NOT NULL DEFAULT 'custom',
+  api_format text NOT NULL DEFAULT 'openai' CHECK (api_format IN ('openai', 'anthropic')),
+  base_url text NOT NULL DEFAULT '',
+  api_key text NOT NULL DEFAULT '',
+  model text NOT NULL DEFAULT '',
+  smartenance_account_key text NOT NULL DEFAULT 'auto',
+  temperature double precision NOT NULL DEFAULT 0.2,
+  max_tool_steps integer NOT NULL DEFAULT 8,
+  system_prompt text NOT NULL DEFAULT '',
+  updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
